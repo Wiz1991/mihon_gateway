@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'packages/mihon_gateway/**'
-      - '.github/workflows/mihon-gateway.yml'
   workflow_dispatch:
 
 jobs:
