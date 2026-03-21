@@ -21,12 +21,12 @@ repositories {
 }
 
 dependencies {
-    // gRPC
+    // gRPC + Armeria (gRPC-Web + CORS support for browser clients)
     implementation("io.grpc:grpc-kotlin-stub:1.4.1")
     implementation("io.grpc:grpc-protobuf:1.76.0")
     implementation("io.grpc:grpc-services:1.76.0")
-    implementation("io.grpc:grpc-netty-shaded:1.60.1")
     implementation("com.google.protobuf:protobuf-kotlin:3.25.1")
+    implementation("com.linecorp.armeria:armeria-grpc:1.33.4")
 
     // Coroutines (match Suwayomi)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

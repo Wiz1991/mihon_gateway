@@ -1,9 +1,12 @@
 package moe.radar.mihon_gateway
 
+import com.linecorp.armeria.common.HttpMethod
+import com.linecorp.armeria.server.Server
+import com.linecorp.armeria.server.cors.CorsService
+import com.linecorp.armeria.server.grpc.GrpcService
 import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.createAppModule
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
 import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.runBlocking
 import moe.radar.mihon_gateway.extension.ExtensionManager
@@ -72,32 +75,44 @@ object Main {
             }
         }
 
-        // Build and start gRPC server
-        val server = NettyServerBuilder
-            .forAddress(java.net.InetSocketAddress("0.0.0.0", port))
+        // Build gRPC service with gRPC-Web support
+        val grpcService = GrpcService.builder()
             .addService(MangaSourceServiceImpl())
             .addService(ProtoReflectionService.newInstance())
+            .enableUnframedRequests(true)
             .build()
 
-        Runtime.getRuntime().addShutdownHook(Thread {
+        // Build Armeria server with CORS for browser clients
+        val server = Server.builder()
+            .http(port)
+            .service(grpcService)
+            .decorator(
+                CorsService.builderForAnyOrigin()
+                    .allowRequestMethods(HttpMethod.POST, HttpMethod.OPTIONS)
+                    .allowRequestHeaders(
+                        "content-type", "x-grpc-web", "x-user-agent", "grpc-timeout",
+                        "keep-alive", "user-agent", "cache-control", "content-transfer-encoding"
+                    )
+                    .exposeHeaders(
+                        "grpc-status", "grpc-message", "grpc-encoding", "grpc-accept-encoding"
+                    )
+                    .newDecorator()
+            )
+            .build()
+
+        server.closeOnJvmShutdown {
             logger.info { "Shutting down gRPC server..." }
-            server.shutdown()
-            server.awaitTermination()
+        }.thenRun {
             logger.info { "Server shut down successfully" }
-        })
+        }
 
         // Start the server
-        server.start()
-        logger.info { "✓ Mihon gRPC Service started on port $port" }
+        server.start().join()
+        logger.info { "✓ Mihon gRPC Service started on port $port (gRPC + gRPC-Web)" }
         logger.info { "Ready to accept connections" }
 
         // Wait for termination
-        try {
-            server.awaitTermination()
-        } catch (e: InterruptedException) {
-            logger.error(e) { "Server interrupted" }
-            exitProcess(1)
-        }
+        server.whenClosed().join()
     }
 
     /**
