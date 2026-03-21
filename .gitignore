@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Kotlin
+*.class
+*.kotlin_module
+*.kotlin_metadata
+
+# Test reports
+*.log
+
+# Compiled files
+bin/
+out/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+
+# Test data
+build/test-data/
+/gradle/wrapper/gradle-wrapper.jar
+/AndroidCompat/build/

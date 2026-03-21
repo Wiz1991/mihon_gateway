@@ -1,0 +1,157 @@
+package moe.radar.mihon_gateway
+
+import eu.kanade.tachiyomi.App
+import eu.kanade.tachiyomi.createAppModule
+import io.github.oshai.kotlinlogging.KotlinLogging
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
+import io.grpc.protobuf.services.ProtoReflectionService
+import kotlinx.coroutines.runBlocking
+import moe.radar.mihon_gateway.extension.ExtensionManager
+import moe.radar.mihon_gateway.service.MangaSourceServiceImpl
+import org.koin.core.context.startKoin
+import org.koin.dsl.module
+import xyz.nulldev.androidcompat.AndroidCompat
+import xyz.nulldev.androidcompat.AndroidCompatInitializer
+import xyz.nulldev.androidcompat.androidCompatModule
+import xyz.nulldev.ts.config.configManagerModule
+import java.io.File
+import kotlin.system.exitProcess
+
+/**
+ * Main entry point for the stateless Mihon gRPC service.
+ *
+ * Usage:
+ *   ./gradlew run
+ *   ./gradlew run --args="--port 50051"
+ */
+object Main {
+    private val logger = KotlinLogging.logger {}
+    private const val DEFAULT_PORT = 50051
+
+    @JvmStatic
+    fun main(args: Array<String>) {
+        // Parse command line arguments
+        val port = parsePort(args)
+
+        logger.info { "Starting Mihon gRPC Service on port $port..." }
+
+        // Initialize Koin dependency injection (exactly like Suwayomi)
+        val app = App()
+        startKoin {
+            modules(
+                createAppModule(app),
+                androidCompatModule(),
+                configManagerModule(),
+                module {
+                    single { ApplicationDirs.instance }
+                }
+            )
+        }
+
+        // Initialize AndroidCompat (exactly like Suwayomi)
+        AndroidCompatInitializer().init()
+        val androidCompat = AndroidCompat()
+        androidCompat.startApp(app)
+
+        // Initialize application directories
+        val appDirs = ApplicationDirs.instance
+        logger.info { "Extensions directory: ${appDirs.extensionsRoot}" }
+        logger.info { "Temp directory: ${appDirs.tempRoot}" }
+
+        // Pre-fetch extension list from GitHub and load installed extensions
+        runBlocking {
+            try {
+                logger.info { "Fetching extension list from GitHub..." }
+                ExtensionManager.fetchExtensionsFromGitHub()
+                logger.info { "Extension list fetched successfully" }
+
+                // Load previously installed extensions from disk
+                ExtensionManager.loadInstalledExtensionsFromDisk()
+            } catch (e: Exception) {
+                logger.warn(e) { "Failed to fetch extension list on startup (will retry on first request)" }
+            }
+        }
+
+        // Build and start gRPC server
+        val server = NettyServerBuilder
+            .forAddress(java.net.InetSocketAddress("0.0.0.0", port))
+            .addService(MangaSourceServiceImpl())
+            .addService(ProtoReflectionService.newInstance())
+            .build()
+
+        Runtime.getRuntime().addShutdownHook(Thread {
+            logger.info { "Shutting down gRPC server..." }
+            server.shutdown()
+            server.awaitTermination()
+            logger.info { "Server shut down successfully" }
+        })
+
+        // Start the server
+        server.start()
+        logger.info { "✓ Mihon gRPC Service started on port $port" }
+        logger.info { "Ready to accept connections" }
+
+        // Wait for termination
+        try {
+            server.awaitTermination()
+        } catch (e: InterruptedException) {
+            logger.error(e) { "Server interrupted" }
+            exitProcess(1)
+        }
+    }
+
+    /**
+     * Parse port from command line arguments.
+     * Supports: --port 50051
+     */
+    private fun parsePort(args: Array<String>): Int {
+        var port = DEFAULT_PORT
+
+        var i = 0
+        while (i < args.size) {
+            when (args[i]) {
+                "--port", "-p" -> {
+                    if (i + 1 < args.size) {
+                        port = args[i + 1].toIntOrNull() ?: DEFAULT_PORT
+                        i++
+                    }
+                }
+                "--help", "-h" -> {
+                    printHelp()
+                    exitProcess(0)
+                }
+            }
+            i++
+        }
+
+        return port
+    }
+
+    private fun printHelp() {
+        println("""
+            Mihon gRPC Service - Stateless manga source service
+
+            Usage:
+              ./gradlew run [options]
+
+            Options:
+              --port, -p <port>    Server port (default: $DEFAULT_PORT)
+              --help, -h           Show this help message
+
+            Examples:
+              ./gradlew run
+              ./gradlew run --args="--port 50051"
+
+            Data directories:
+              Extensions: ~/.mihon-grpc/extensions
+              Temp:       ~/.mihon-grpc/temp
+
+            Features:
+              • Stateless operation (no database)
+              • URL-based manga identification
+              • Auto-updating extension list from GitHub
+              • Per-source rate limiting
+              • Streaming search/browse results
+        """.trimIndent())
+    }
+}

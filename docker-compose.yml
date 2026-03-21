@@ -1,0 +1,21 @@
+services:
+  mihon-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mihon-gateway
+    ports:
+      - "50051:50051"
+    volumes:
+      # Data directory for extensions and cache (mimics Suwayomi pattern)
+      - ./data:/home/mihon/.local/share/mihon_gateway
+    environment:
+      - GRPC_PORT=50051
+      - JAVA_OPTS=-Xmx512m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/50051' || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3

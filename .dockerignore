@@ -1,0 +1,44 @@
+# Build artifacts - CRITICAL for image size
+build/
+.gradle/
+*.log
+
+# Exclude ALL pre-built artifacts
+AndroidCompat/build/
+AndroidCompat/Config/build/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+
+# Docker files
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose.yml
+
+# Test files
+src/test/
+test-data/
+
+# Temporary files
+*.tmp
+*.temp
+*.cache

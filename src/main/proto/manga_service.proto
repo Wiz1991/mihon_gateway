@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package moe.radar.mihon_gateway;
+
+option java_multiple_files = true;
+option java_package = "moe.radar.mihon_gateway.proto";
+option java_outer_classname = "MangaServiceProto";
+
+// Main service for manga source operations
+service MangaSourceService {
+  // Extension management
+  rpc ListExtensions(ListExtensionsRequest) returns (ListExtensionsResponse);
+  rpc InstallExtension(InstallExtensionRequest) returns (InstallExtensionResponse);
+  rpc UninstallExtension(UninstallExtensionRequest) returns (Empty);
+  rpc UpdateExtension(UpdateExtensionRequest) returns (UpdateExtensionResponse);
+
+  // Source management
+  rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse);
+  rpc GetSource(GetSourceRequest) returns (Source);
+
+  // Manga operations (stateless - URL-based)
+  rpc GetMangaDetails(GetMangaDetailsRequest) returns (Manga);
+  rpc SearchManga(SearchMangaRequest) returns (SearchMangaResponse);
+  rpc GetPopularManga(GetPopularMangaRequest) returns (GetPopularMangaResponse);
+  rpc GetLatestManga(GetLatestMangaRequest) returns (GetLatestMangaResponse);
+
+  // Chapter operations
+  rpc GetChapterList(GetChapterListRequest) returns (ChapterListResponse);
+  rpc GetPageList(GetPageListRequest) returns (PageListResponse);
+}
+
+// Common messages
+message Empty {}
+
+// Extension messages
+message Extension {
+  string pkg_name = 1;
+  string name = 2;
+  string version_name = 3;
+  int32 version_code = 4;
+  string lang = 5;
+  bool is_nsfw = 6;
+  bool is_installed = 7;
+  bool has_update = 8;
+  string icon_url = 9;
+  string repo = 10;
+}
+
+message ListExtensionsRequest {}
+
+message ListExtensionsResponse {
+  repeated Extension extensions = 1;
+}
+
+message InstallExtensionRequest {
+  string pkg_name = 1;
+}
+
+message InstallExtensionResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message UninstallExtensionRequest {
+  string pkg_name = 1;
+}
+
+message UpdateExtensionRequest {
+  string pkg_name = 1;
+}
+
+message UpdateExtensionResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Source messages
+message Source {
+  int64 id = 1;
+  string name = 2;
+  string lang = 3;
+  bool supports_latest = 4;
+  bool is_configurable = 5;
+  bool is_nsfw = 6;
+  string display_name = 7;
+  string base_url = 8;
+  string icon_url = 9;
+}
+
+message ListSourcesRequest {}
+
+message ListSourcesResponse {
+  repeated Source sources = 1;
+}
+
+message GetSourceRequest {
+  int64 source_id = 1;
+}
+
+// Manga messages
+message Manga {
+  string url = 1;              // Primary identifier!
+  int64 source_id = 2;
+  string title = 3;
+  string author = 4;
+  string artist = 5;
+  string description = 6;
+  repeated string genre = 7;
+  string status = 8;            // UNKNOWN, ONGOING, COMPLETED, LICENSED, PUBLISHING_FINISHED, CANCELLED, ON_HIATUS
+  string thumbnail_url = 9;
+  bool initialized = 10;
+}
+
+message GetMangaDetailsRequest {
+  int64 source_id = 1;
+  string manga_url = 2;         // Just the URL identifier from search/browse!
+}
+
+message SearchMangaRequest {
+  int64 source_id = 1;
+  string query = 2;
+  int32 page = 3;
+}
+
+message SearchMangaResponse {
+  repeated Manga manga = 1;
+  bool has_next_page = 2;
+}
+
+message GetPopularMangaRequest {
+  int64 source_id = 1;
+  int32 page = 2;
+}
+
+message GetPopularMangaResponse {
+  repeated Manga manga = 1;
+  bool has_next_page = 2;
+}
+
+message GetLatestMangaRequest {
+  int64 source_id = 1;
+  int32 page = 2;
+}
+
+message GetLatestMangaResponse {
+  repeated Manga manga = 1;
+  bool has_next_page = 2;
+}
+
+// Chapter messages
+message Chapter {
+  string url = 1;               // Chapter identifier
+  string name = 2;
+  int64 date_upload = 3;
+  float chapter_number = 4;
+  string scanlator = 5;
+}
+
+message GetChapterListRequest {
+  int64 source_id = 1;
+  string manga_url = 2;
+}
+
+message ChapterListResponse {
+  repeated Chapter chapters = 1;
+}
+
+// Page messages
+message Page {
+  int32 index = 1;
+  string image_url = 2;
+}
+
+message GetPageListRequest {
+  int64 source_id = 1;
+  string chapter_url = 2;
+}
+
+message PageListResponse {
+  repeated Page pages = 1;
+}
