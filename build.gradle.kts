@@ -93,6 +93,9 @@ dependencies {
     // Cache
     implementation("io.github.reactivecircus.cache4k:cache4k:0.14.0")
 
+    // Playwright (Layer 3 - headless Chromium for extensions needing full browser)
+    implementation("com.microsoft.playwright:playwright:1.51.0")
+
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("io.grpc:grpc-testing:1.60.1")
@@ -100,6 +103,8 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.insert-koin:koin-test:4.1.1")
     testImplementation("io.insert-koin:koin-test-junit5:4.1.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.2.1")
+    testImplementation("com.github.Suwayomi:android-jar:1.0.0")
 }
 
 protobuf {

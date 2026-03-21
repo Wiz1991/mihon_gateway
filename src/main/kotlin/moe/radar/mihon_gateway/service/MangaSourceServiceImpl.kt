@@ -7,7 +7,10 @@ import androidx.preference.Preference as AndroidPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.CheckBoxPreference as AndroidCheckBoxPreference
+import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -18,7 +21,13 @@ import moe.radar.mihon_gateway.extension.ExtensionManager
 import moe.radar.mihon_gateway.proto.*
 import moe.radar.mihon_gateway.source.SourceManager
 import moe.radar.mihon_gateway.state.StatelessState
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import xyz.nulldev.androidcompat.androidimpl.CustomContext
+import xyz.nulldev.androidcompat.webkit.LocalStorageManager
+import java.net.URI
 
 /**
  * Stateless gRPC service implementation for manga sources.
@@ -26,8 +35,9 @@ import xyz.nulldev.androidcompat.androidimpl.CustomContext
  * Key design principle: Uses URL as primary identifier for manga/chapters.
  * No database - all operations are stateless.
  */
-class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCoroutineImplBase() {
+class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCoroutineImplBase(), KoinComponent {
     private val logger = KotlinLogging.logger {}
+    private val networkHelper: NetworkHelper by inject()
 
     // ==================== Extension Management ====================
 
@@ -346,6 +356,113 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         return builder.build()
     }
 
+    // ==================== Cookie Management (Layer 1) ====================
+
+    override suspend fun setCookies(request: SetCookiesRequest): SetCookiesResponse {
+        logger.debug { "setCookies: url=${request.url}, count=${request.cookiesList.size}" }
+
+        val httpUrl = request.url.toHttpUrlOrNull()
+            ?: throw io.grpc.StatusException(
+                io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid URL: ${request.url}")
+            )
+
+        val cookies = request.cookiesList.map { cookieData ->
+            Cookie.Builder()
+                .name(cookieData.name)
+                .value(cookieData.value)
+                .domain(cookieData.domain.ifEmpty { httpUrl.host })
+                .path(cookieData.path.ifEmpty { "/" })
+                .apply {
+                    if (cookieData.secure) secure()
+                    if (cookieData.httpOnly) httpOnly()
+                    if (cookieData.expiresAt > 0) expiresAt(cookieData.expiresAt)
+                    else expiresAt(Long.MAX_VALUE)
+                }
+                .build()
+        }
+
+        networkHelper.cookieStore.addAll(httpUrl, cookies)
+
+        return SetCookiesResponse.newBuilder()
+            .setCookiesSet(cookies.size)
+            .build()
+    }
+
+    override suspend fun getCookies(request: GetCookiesRequest): GetCookiesResponse {
+        logger.debug { "getCookies: url=${request.url}" }
+
+        val httpUrl = request.url.toHttpUrlOrNull()
+            ?: throw io.grpc.StatusException(
+                io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid URL: ${request.url}")
+            )
+
+        val cookies = networkHelper.cookieStore.get(httpUrl)
+
+        return GetCookiesResponse.newBuilder()
+            .addAllCookies(cookies.map { cookie ->
+                CookieData.newBuilder()
+                    .setName(cookie.name)
+                    .setValue(cookie.value)
+                    .setDomain(cookie.domain)
+                    .setPath(cookie.path)
+                    .setSecure(cookie.secure)
+                    .setHttpOnly(cookie.httpOnly)
+                    .setExpiresAt(cookie.expiresAt)
+                    .build()
+            })
+            .build()
+    }
+
+    override suspend fun clearCookies(request: ClearCookiesRequest): Empty {
+        logger.debug { "clearCookies: url=${request.url}" }
+
+        if (request.url.isEmpty()) {
+            networkHelper.cookieStore.removeAll()
+        } else {
+            val uri = try {
+                URI(request.url)
+            } catch (e: Exception) {
+                throw io.grpc.StatusException(
+                    io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid URL: ${request.url}")
+                )
+            }
+            networkHelper.cookieStore.remove(uri)
+        }
+
+        return Empty.getDefaultInstance()
+    }
+
+    // ==================== LocalStorage Management (Layer 1) ====================
+
+    override suspend fun setLocalStorageItem(request: SetLocalStorageItemRequest): Empty {
+        logger.debug { "setLocalStorageItem: url=${request.url}, key=${request.key}" }
+
+        val origin = LocalStorageManager.extractOrigin(request.url)
+        LocalStorageManager.setItem(origin, request.key, request.value)
+
+        return Empty.getDefaultInstance()
+    }
+
+    override suspend fun getLocalStorageItems(request: GetLocalStorageItemsRequest): GetLocalStorageItemsResponse {
+        logger.debug { "getLocalStorageItems: url=${request.url}" }
+
+        val origin = LocalStorageManager.extractOrigin(request.url)
+        val items = LocalStorageManager.getAllItems(origin)
+
+        return GetLocalStorageItemsResponse.newBuilder()
+            .putAllItems(items)
+            .build()
+    }
+
+    override suspend fun clearLocalStorage(request: ClearLocalStorageRequest): Empty {
+        logger.debug { "clearLocalStorage: url=${request.url}" }
+
+        val origin = LocalStorageManager.extractOrigin(request.url)
+        LocalStorageManager.clear(origin)
+
+        return Empty.getDefaultInstance()
+    }
+
     // ==================== Manga Operations (Stateless!) ====================
 
     /**
@@ -363,7 +480,18 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         }
 
         // Fetch details from source
-        val details = source.getMangaDetails(sManga)
+        val details = try {
+            source.getMangaDetails(sManga)
+        } catch (e: Exception) {
+            logger.error(e) { "getMangaDetails failed for sourceId=${request.sourceId}, url=${request.mangaUrl}" }
+            throw io.grpc.StatusException(
+                io.grpc.Status.INTERNAL.withDescription("Failed to fetch manga details: ${e.message}")
+            )
+        }
+
+        // Source returns a new SManga with metadata only — URL is never set on the result.
+        // Preserve the original URL from the request (same as Suwayomi keeping it from DB).
+        details.url = request.mangaUrl
 
         // Convert to protobuf (no DB storage!)
         return details.toProto(request.sourceId)
@@ -377,12 +505,29 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
 
         val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
 
-        // Fetch search results
-        val results = source.getSearchManga(
-            page = request.page,
-            query = request.query,
-            filters = FilterList()
-        )
+        // Fetch search results — some sources throw 404 on no results
+        val results = try {
+            source.getSearchManga(
+                page = request.page,
+                query = request.query,
+                filters = FilterList()
+            )
+        } catch (e: HttpException) {
+            if (e.code == 404) {
+                logger.debug { "searchManga returned 404, treating as empty results" }
+                return SearchMangaResponse.newBuilder()
+                    .setHasNextPage(false)
+                    .build()
+            }
+            throw io.grpc.StatusException(
+                io.grpc.Status.INTERNAL.withDescription("HTTP error ${e.code} during search")
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "searchManga failed for sourceId=${request.sourceId}" }
+            throw io.grpc.StatusException(
+                io.grpc.Status.INTERNAL.withDescription("Search failed: ${e.message}")
+            )
+        }
 
         // Convert all manga to protobuf
         val mangaList = results.mangas.map { sManga ->
@@ -459,6 +604,18 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         }
 
         val chapters = source.getChapterList(sManga)
+
+        // Parse chapter numbers from names (extensions typically leave chapter_number as -1)
+        val mangaTitle = request.mangaTitle
+        if (mangaTitle.isNotEmpty()) {
+            chapters.forEach { chapter ->
+                chapter.chapter_number = ChapterRecognition.parseChapterNumber(
+                    mangaTitle,
+                    chapter.name,
+                    chapter.chapter_number.toDouble(),
+                ).toFloat()
+            }
+        }
 
         return ChapterListResponse.newBuilder()
             .addAllChapters(chapters.map { it.toProto() })

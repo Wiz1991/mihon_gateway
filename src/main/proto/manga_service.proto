@@ -31,6 +31,16 @@ service MangaSourceService {
   // Chapter operations
   rpc GetChapterList(GetChapterListRequest) returns (ChapterListResponse);
   rpc GetPageList(GetPageListRequest) returns (PageListResponse);
+
+  // Cookie management (Layer 1 - Auth)
+  rpc SetCookies(SetCookiesRequest) returns (SetCookiesResponse);
+  rpc GetCookies(GetCookiesRequest) returns (GetCookiesResponse);
+  rpc ClearCookies(ClearCookiesRequest) returns (Empty);
+
+  // LocalStorage management (Layer 1 - Auth)
+  rpc SetLocalStorageItem(SetLocalStorageItemRequest) returns (Empty);
+  rpc GetLocalStorageItems(GetLocalStorageItemsRequest) returns (GetLocalStorageItemsResponse);
+  rpc ClearLocalStorage(ClearLocalStorageRequest) returns (Empty);
 }
 
 // Common messages
@@ -230,6 +240,7 @@ message Chapter {
 message GetChapterListRequest {
   int64 source_id = 1;
   string manga_url = 2;
+  string manga_title = 3;  // Used for chapter number recognition
 }
 
 message ChapterListResponse {
@@ -249,4 +260,55 @@ message GetPageListRequest {
 
 message PageListResponse {
   repeated Page pages = 1;
+}
+
+// Cookie messages (Layer 1 - Auth)
+message CookieData {
+  string name = 1;
+  string value = 2;
+  string domain = 3;
+  string path = 4;
+  bool secure = 5;
+  bool http_only = 6;
+  int64 expires_at = 7;
+}
+
+message SetCookiesRequest {
+  string url = 1;
+  repeated CookieData cookies = 2;
+}
+
+message SetCookiesResponse {
+  int32 cookies_set = 1;
+}
+
+message GetCookiesRequest {
+  string url = 1;
+}
+
+message GetCookiesResponse {
+  repeated CookieData cookies = 1;
+}
+
+message ClearCookiesRequest {
+  string url = 1;  // If empty, clears all cookies
+}
+
+// LocalStorage messages (Layer 1 - Auth)
+message SetLocalStorageItemRequest {
+  string url = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message GetLocalStorageItemsRequest {
+  string url = 1;
+}
+
+message GetLocalStorageItemsResponse {
+  map<string, string> items = 1;
+}
+
+message ClearLocalStorageRequest {
+  string url = 1;
 }

@@ -9,7 +9,9 @@ import eu.kanade.tachiyomi.createAppModule
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.runBlocking
+import moe.radar.mihon_gateway.browser.PlaywrightManager
 import moe.radar.mihon_gateway.extension.ExtensionManager
+import moe.radar.mihon_gateway.service.ImageProxyService
 import moe.radar.mihon_gateway.service.MangaSourceServiceImpl
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
@@ -86,9 +88,10 @@ object Main {
         val server = Server.builder()
             .http(port)
             .service(grpcService)
+            .service("/proxy/:sourceId", ImageProxyService())
             .decorator(
                 CorsService.builderForAnyOrigin()
-                    .allowRequestMethods(HttpMethod.POST, HttpMethod.OPTIONS)
+                    .allowRequestMethods(HttpMethod.POST, HttpMethod.GET, HttpMethod.OPTIONS)
                     .allowRequestHeaders(
                         "content-type", "x-grpc-web", "x-user-agent", "grpc-timeout",
                         "keep-alive", "user-agent", "cache-control", "content-transfer-encoding"
@@ -102,6 +105,7 @@ object Main {
 
         server.closeOnJvmShutdown {
             logger.info { "Shutting down gRPC server..." }
+            PlaywrightManager.shutdown()
         }.thenRun {
             logger.info { "Server shut down successfully" }
         }

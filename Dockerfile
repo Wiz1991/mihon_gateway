@@ -26,12 +26,24 @@ RUN ./gradlew installDist --no-daemon --stacktrace && \
            /root/.gradle/caches/*/fileHashes \
            /root/.gradle/caches/*/javaCompile
 
-# Runtime stage - use alpine for minimal size (~200MB total vs 900MB+)
-FROM eclipse-temurin:21-jre-alpine
+# Runtime stage - Debian for Playwright Chromium compatibility
+FROM eclipse-temurin:21-jre-noble
 
-# Create non-root user
-RUN addgroup -S mihon && \
-    adduser -S -G mihon -h /home/mihon mihon
+# Create non-root user before installing Playwright so browsers are accessible
+RUN groupadd -r mihon && \
+    useradd -r -g mihon -d /home/mihon -m mihon
+
+# Install Playwright Chromium deps (system libs), then install browser as mihon user
+# Using PLAYWRIGHT_BROWSERS_PATH to store browsers in a shared location accessible by mihon
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends nodejs npm && \
+    mkdir -p /opt/playwright-browsers && \
+    npx playwright install --with-deps chromium && \
+    chown -R mihon:mihon /opt/playwright-browsers && \
+    apt-get remove -y nodejs npm && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /root/.npm
 
 WORKDIR /app
 
