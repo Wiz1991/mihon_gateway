@@ -50,6 +50,9 @@ The service exposes a single `MangaSourceService` with the following RPCs:
 | | `InstallExtension` | Install an extension by package name |
 | | `UninstallExtension` | Remove an installed extension |
 | | `UpdateExtension` | Update an extension to latest version |
+| Repos | `AddExtensionRepo` | Add a custom extension repository URL |
+| | `RemoveExtensionRepo` | Remove an extension repository |
+| | `ListExtensionRepos` | List all configured extension repos |
 | Sources | `ListSources` | List all loaded sources |
 | | `GetSource` | Get source metadata by ID |
 | Manga | `GetMangaDetails` | Fetch manga details by source ID + URL |
@@ -68,6 +71,39 @@ The service exposes a single `MangaSourceService` with the following RPCs:
 | | `ClearLocalStorage` | Clear localStorage for a source |
 
 See [`manga_service.proto`](src/main/proto/manga_service.proto) for full message definitions.
+
+## Docker Volume Persistence
+
+The container stores extensions, preferences, and cookies under a single data directory. Mount a volume to persist this data across container restarts and upgrades.
+
+### docker compose (default)
+
+The included `docker-compose.yml` already maps `./data` on the host:
+
+```yaml
+volumes:
+  - ./data:/home/mihon/.local/share/mihon_gateway
+```
+
+### docker run
+
+```bash
+docker run -d \
+  -p 50051:50051 \
+  -v /path/on/host:/home/mihon/.local/share/mihon_gateway \
+  mihon-gateway
+```
+
+### What gets persisted
+
+| Path inside volume | Contents |
+|---|---|
+| `extensions/` | Downloaded APK and JAR files for installed extensions |
+| `preferences/` | Source-specific SharedPreferences (XML files) |
+| `cookies/` | Persistent cookie store for authenticated sources |
+| `local-storage/` | localStorage key-value data for sources that need it |
+
+Without a volume, all installed extensions and preferences are lost when the container is recreated. Extension repo URLs are stored in memory only and always reset to the default ([keiyoushi](https://github.com/keiyoushi/extensions)) on restart.
 
 ## Architecture
 

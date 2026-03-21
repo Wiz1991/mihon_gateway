@@ -32,6 +32,11 @@ service MangaSourceService {
   rpc GetChapterList(GetChapterListRequest) returns (ChapterListResponse);
   rpc GetPageList(GetPageListRequest) returns (PageListResponse);
 
+  // Extension repo management
+  rpc AddExtensionRepo(AddExtensionRepoRequest) returns (AddExtensionRepoResponse);
+  rpc RemoveExtensionRepo(RemoveExtensionRepoRequest) returns (Empty);
+  rpc ListExtensionRepos(ListExtensionReposRequest) returns (ListExtensionReposResponse);
+
   // Cookie management (Layer 1 - Auth)
   rpc SetCookies(SetCookiesRequest) returns (SetCookiesResponse);
   rpc GetCookies(GetCookiesRequest) returns (GetCookiesResponse);
@@ -86,6 +91,25 @@ message UpdateExtensionRequest {
 message UpdateExtensionResponse {
   bool success = 1;
   string message = 2;
+}
+
+// Extension repo messages
+message AddExtensionRepoRequest {
+  string repo_url = 1;
+}
+
+message AddExtensionRepoResponse {
+  repeated string repos = 1;
+}
+
+message RemoveExtensionRepoRequest {
+  string repo_url = 1;
+}
+
+message ListExtensionReposRequest {}
+
+message ListExtensionReposResponse {
+  repeated string repos = 1;
 }
 
 // Source messages

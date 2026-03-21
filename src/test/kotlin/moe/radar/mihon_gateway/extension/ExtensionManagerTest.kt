@@ -276,6 +276,97 @@ class ExtensionManagerTest : BaseTest() {
         assertNotSame(originalInstance, reloadedInstance, "Source should be a new instance after reload")
     }
 
+    // ==================== Extension Repo Management ====================
+
+    @Test
+    @DisplayName("listRepos returns default keiyoushi repo")
+    fun testListReposDefault() {
+        val repos = ExtensionManager.listRepos()
+        assertEquals(1, repos.size)
+        assertEquals(
+            "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+            repos[0]
+        )
+    }
+
+    @Test
+    @DisplayName("addRepo adds a new repo and returns updated list")
+    fun testAddRepo() {
+        val customUrl = "https://example.com/extensions/repo/index.min.json"
+        val repos = ExtensionManager.addRepo(customUrl)
+
+        assertEquals(2, repos.size)
+        assertTrue(repos.contains(customUrl))
+        assertTrue(repos.contains("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"))
+    }
+
+    @Test
+    @DisplayName("addRepo is idempotent for duplicate URLs")
+    fun testAddRepoDuplicate() {
+        val customUrl = "https://example.com/extensions/repo/index.min.json"
+        val first = ExtensionManager.addRepo(customUrl)
+        val second = ExtensionManager.addRepo(customUrl)
+
+        assertEquals(first, second)
+        assertEquals(2, second.size)
+    }
+
+    @Test
+    @DisplayName("addRepo invalidates extension list cache")
+    fun testAddRepoInvalidatesCache() {
+        // Populate cache
+        StatelessState.updateExtensionListCache(emptyList())
+        assertTrue(StatelessState.isExtensionListCacheValid())
+
+        // Adding a repo should invalidate
+        ExtensionManager.addRepo("https://example.com/repo/index.min.json")
+        assertFalse(StatelessState.isExtensionListCacheValid())
+    }
+
+    @Test
+    @DisplayName("removeRepo removes a repo")
+    fun testRemoveRepo() {
+        val customUrl = "https://example.com/extensions/repo/index.min.json"
+        ExtensionManager.addRepo(customUrl)
+        assertEquals(2, ExtensionManager.listRepos().size)
+
+        ExtensionManager.removeRepo(customUrl)
+        assertEquals(1, ExtensionManager.listRepos().size)
+        assertFalse(ExtensionManager.listRepos().contains(customUrl))
+    }
+
+    @Test
+    @DisplayName("removeRepo allows removing default keiyoushi repo")
+    fun testRemoveDefaultRepo() {
+        val defaultUrl = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+        ExtensionManager.removeRepo(defaultUrl)
+
+        assertTrue(ExtensionManager.listRepos().isEmpty())
+    }
+
+    @Test
+    @DisplayName("removeRepo invalidates extension list cache")
+    fun testRemoveRepoInvalidatesCache() {
+        val customUrl = "https://example.com/repo/index.min.json"
+        ExtensionManager.addRepo(customUrl)
+
+        // Populate cache
+        StatelessState.updateExtensionListCache(emptyList())
+        assertTrue(StatelessState.isExtensionListCacheValid())
+
+        // Removing a repo should invalidate
+        ExtensionManager.removeRepo(customUrl)
+        assertFalse(StatelessState.isExtensionListCacheValid())
+    }
+
+    @Test
+    @DisplayName("removeRepo is no-op for non-existent URL")
+    fun testRemoveRepoNonExistent() {
+        val before = ExtensionManager.listRepos()
+        ExtensionManager.removeRepo("https://nonexistent.example.com/index.min.json")
+        assertEquals(before, ExtensionManager.listRepos())
+    }
+
     @Test
     @DisplayName("reloadExtensionSources throws for unknown package")
     fun testReloadExtensionSourcesUnknownPackage() {

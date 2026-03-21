@@ -4,6 +4,7 @@ import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.CatalogueSource
 import suwayomi.tachidesk.manga.impl.extension.github.OnlineExtension
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.serialization.Serializable
 
 /**
@@ -42,6 +43,14 @@ object StatelessState {
     val preferenceScreenCache = ConcurrentHashMap<Long, PreferenceScreen>()
 
     /**
+     * Extension repository URLs - thread-safe, initialized with keiyoushi default.
+     * In-memory only; resets to default on restart.
+     */
+    val extensionRepos = CopyOnWriteArrayList(
+        listOf("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json")
+    )
+
+    /**
      * Extension list from GitHub - cached for 60 seconds
      */
     var extensionListCache: List<OnlineExtension>? = null
@@ -51,6 +60,11 @@ object StatelessState {
     fun isExtensionListCacheValid(): Boolean {
         return extensionListCache != null &&
             (System.currentTimeMillis() - extensionListCacheTime) < CACHE_TTL_MS
+    }
+
+    fun invalidateExtensionListCache() {
+        extensionListCache = null
+        extensionListCacheTime = 0
     }
 
     fun updateExtensionListCache(extensions: List<OnlineExtension>) {
@@ -83,6 +97,8 @@ object StatelessState {
         preferenceScreenCache.clear()
         extensionListCache = null
         extensionListCacheTime = 0
+        extensionRepos.clear()
+        extensionRepos.add("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json")
     }
 }
 

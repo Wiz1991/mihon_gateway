@@ -223,6 +223,72 @@ class StatelessStateTest : BaseTest() {
         assertTrue(StatelessState.preferenceScreenCache.isEmpty())
     }
 
+    // ==================== Extension Repos ====================
+
+    @Test
+    @DisplayName("Extension repos initialized with keiyoushi default")
+    fun testExtensionReposDefault() {
+        assertEquals(1, StatelessState.extensionRepos.size)
+        assertEquals(
+            "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+            StatelessState.extensionRepos[0]
+        )
+    }
+
+    @Test
+    @DisplayName("Extension repos addIfAbsent is idempotent")
+    fun testExtensionReposIdempotentAdd() {
+        val url = "https://example.com/repo/index.min.json"
+        assertTrue(StatelessState.extensionRepos.addIfAbsent(url))
+        assertFalse(StatelessState.extensionRepos.addIfAbsent(url))
+        assertEquals(2, StatelessState.extensionRepos.size)
+    }
+
+    @Test
+    @DisplayName("Extension repos remove works")
+    fun testExtensionReposRemove() {
+        val url = "https://example.com/repo/index.min.json"
+        StatelessState.extensionRepos.addIfAbsent(url)
+        assertEquals(2, StatelessState.extensionRepos.size)
+
+        assertTrue(StatelessState.extensionRepos.remove(url))
+        assertEquals(1, StatelessState.extensionRepos.size)
+    }
+
+    @Test
+    @DisplayName("Extension repos can remove keiyoushi default")
+    fun testExtensionReposRemoveDefault() {
+        val defaultUrl = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"
+        assertTrue(StatelessState.extensionRepos.remove(defaultUrl))
+        assertTrue(StatelessState.extensionRepos.isEmpty())
+    }
+
+    @Test
+    @DisplayName("clear() resets extension repos to default")
+    fun testClearResetsExtensionRepos() {
+        StatelessState.extensionRepos.add("https://example.com/custom")
+        assertEquals(2, StatelessState.extensionRepos.size)
+
+        StatelessState.clear()
+
+        assertEquals(1, StatelessState.extensionRepos.size)
+        assertEquals(
+            "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+            StatelessState.extensionRepos[0]
+        )
+    }
+
+    @Test
+    @DisplayName("invalidateExtensionListCache clears cache")
+    fun testInvalidateExtensionListCache() {
+        StatelessState.updateExtensionListCache(emptyList())
+        assertTrue(StatelessState.isExtensionListCacheValid())
+
+        StatelessState.invalidateExtensionListCache()
+
+        assertFalse(StatelessState.isExtensionListCacheValid())
+    }
+
     @Test
     @DisplayName("Extension metadata is properly initialized")
     fun testExtensionMetadataDefaults() {

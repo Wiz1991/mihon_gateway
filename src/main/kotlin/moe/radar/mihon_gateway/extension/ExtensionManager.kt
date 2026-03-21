@@ -55,7 +55,7 @@ object ExtensionManager {
      * Fetch extension list from GitHub repositories
      */
     suspend fun fetchExtensionsFromGitHub(
-        repos: List<String> = listOf("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json")
+        repos: List<String> = StatelessState.extensionRepos.toList()
     ) {
         if (StatelessState.isExtensionListCacheValid()) {
             logger.debug { "Using cached extension list" }
@@ -444,6 +444,38 @@ object ExtensionManager {
 
         val loadedCount = StatelessState.loadedJars.size
         logger.info { "Loaded $loadedCount installed extensions from disk" }
+    }
+
+    /**
+     * Add an extension repository URL. Idempotent — duplicates are ignored.
+     * Invalidates extension list cache so next fetch includes the new repo.
+     */
+    fun addRepo(url: String): List<String> {
+        val added = StatelessState.extensionRepos.addIfAbsent(url)
+        if (added) {
+            StatelessState.invalidateExtensionListCache()
+            logger.info { "Added extension repo: $url" }
+        }
+        return StatelessState.extensionRepos.toList()
+    }
+
+    /**
+     * Remove an extension repository URL.
+     * Invalidates extension list cache so next fetch excludes the removed repo.
+     */
+    fun removeRepo(url: String) {
+        val removed = StatelessState.extensionRepos.remove(url)
+        if (removed) {
+            StatelessState.invalidateExtensionListCache()
+            logger.info { "Removed extension repo: $url" }
+        }
+    }
+
+    /**
+     * List all configured extension repository URLs.
+     */
+    fun listRepos(): List<String> {
+        return StatelessState.extensionRepos.toList()
     }
 
     /**

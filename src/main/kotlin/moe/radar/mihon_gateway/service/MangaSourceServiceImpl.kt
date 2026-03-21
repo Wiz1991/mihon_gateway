@@ -123,6 +123,34 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             )
     }
 
+    // ==================== Extension Repo Management ====================
+
+    override suspend fun addExtensionRepo(request: AddExtensionRepoRequest): AddExtensionRepoResponse {
+        logger.info { "addExtensionRepo: ${request.repoUrl}" }
+
+        val repos = ExtensionManager.addRepo(request.repoUrl)
+
+        return AddExtensionRepoResponse.newBuilder()
+            .addAllRepos(repos)
+            .build()
+    }
+
+    override suspend fun removeExtensionRepo(request: RemoveExtensionRepoRequest): Empty {
+        logger.info { "removeExtensionRepo: ${request.repoUrl}" }
+
+        ExtensionManager.removeRepo(request.repoUrl)
+
+        return Empty.getDefaultInstance()
+    }
+
+    override suspend fun listExtensionRepos(request: ListExtensionReposRequest): ListExtensionReposResponse {
+        logger.debug { "listExtensionRepos called" }
+
+        return ListExtensionReposResponse.newBuilder()
+            .addAllRepos(ExtensionManager.listRepos())
+            .build()
+    }
+
     // ==================== Source Management ====================
 
     override suspend fun listSources(request: ListSourcesRequest): ListSourcesResponse {
