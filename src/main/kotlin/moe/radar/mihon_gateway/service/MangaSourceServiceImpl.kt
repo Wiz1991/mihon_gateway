@@ -119,6 +119,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         logger.debug { "listSources called" }
 
         val sources = SourceManager.listSources().map { sourceInfo ->
+            val iconUrl = sourceInfo.extensionPkgName
+                ?.let { StatelessState.extensions[it]?.iconUrl }
+                ?: ""
+
             Source.newBuilder()
                 .setId(sourceInfo.id)
                 .setName(sourceInfo.name)
@@ -128,7 +132,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
                 .setIsNsfw(sourceInfo.isNsfw)
                 .setDisplayName(sourceInfo.displayName)
                 .apply { sourceInfo.baseUrl?.let { setBaseUrl(it) } }
-                .setIconUrl("") // TODO: Add icon URL support
+                .setIconUrl(iconUrl)
                 .build()
         }
 
@@ -145,6 +149,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
                 io.grpc.Status.NOT_FOUND.withDescription("Source ${request.sourceId} not found")
             )
 
+        val iconUrl = sourceInfo.extensionPkgName
+            ?.let { StatelessState.extensions[it]?.iconUrl }
+            ?: ""
+
         return Source.newBuilder()
             .setId(sourceInfo.id)
             .setName(sourceInfo.name)
@@ -154,7 +162,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             .setIsNsfw(sourceInfo.isNsfw)
             .setDisplayName(sourceInfo.displayName)
             .apply { sourceInfo.baseUrl?.let { setBaseUrl(it) } }
-            .setIconUrl("")
+            .setIconUrl(iconUrl)
             .build()
     }
 
