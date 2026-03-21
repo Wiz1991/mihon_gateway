@@ -24,6 +24,10 @@ service MangaSourceService {
   rpc GetPopularManga(GetPopularMangaRequest) returns (GetPopularMangaResponse);
   rpc GetLatestManga(GetLatestMangaRequest) returns (GetLatestMangaResponse);
 
+  // Source preferences
+  rpc GetSourcePreferences(GetSourcePreferencesRequest) returns (GetSourcePreferencesResponse);
+  rpc SetSourcePreference(SetSourcePreferenceRequest) returns (GetSourcePreferencesResponse);
+
   // Chapter operations
   rpc GetChapterList(GetChapterListRequest) returns (ChapterListResponse);
   rpc GetPageList(GetPageListRequest) returns (PageListResponse);
@@ -95,6 +99,73 @@ message ListSourcesResponse {
 
 message GetSourceRequest {
   int64 source_id = 1;
+}
+
+// Source preference messages
+message GetSourcePreferencesRequest {
+  int64 source_id = 1;
+}
+
+message GetSourcePreferencesResponse {
+  repeated SourcePreference preferences = 1;
+}
+
+message SetSourcePreferenceRequest {
+  int64 source_id = 1;
+  string key = 2;
+  oneof value {
+    bool bool_value = 3;
+    string string_value = 4;
+    StringList string_list_value = 5;
+  }
+}
+
+message StringList {
+  repeated string values = 1;
+}
+
+message SourcePreference {
+  string key = 1;
+  string title = 2;
+  string summary = 3;
+  bool visible = 4;
+  string default_value_type = 5;
+
+  oneof preference {
+    SwitchPreference switch_preference = 10;
+    CheckBoxPreference check_box_preference = 11;
+    EditTextPreference edit_text_preference = 12;
+    ListPreference list_preference = 13;
+    MultiSelectListPreference multi_select_list_preference = 14;
+  }
+}
+
+message SwitchPreference {
+  bool current_value = 1;
+}
+
+message CheckBoxPreference {
+  bool current_value = 1;
+}
+
+message EditTextPreference {
+  string current_value = 1;
+  string dialog_title = 2;
+  string dialog_message = 3;
+}
+
+message ListPreference {
+  string current_value = 1;
+  repeated string entries = 2;
+  repeated string entry_values = 3;
+}
+
+message MultiSelectListPreference {
+  repeated string current_value = 1;
+  repeated string entries = 2;
+  repeated string entry_values = 3;
+  string dialog_title = 4;
+  string dialog_message = 5;
 }
 
 // Manga messages

@@ -1,13 +1,24 @@
 package moe.radar.mihon_gateway.service
 
+import androidx.preference.EditTextPreference as AndroidEditTextPreference
+import androidx.preference.ListPreference as AndroidListPreference
+import androidx.preference.MultiSelectListPreference as AndroidMultiSelectListPreference
+import androidx.preference.Preference as AndroidPreference
+import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
+import androidx.preference.CheckBoxPreference as AndroidCheckBoxPreference
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.sourcePreferences
 import io.github.oshai.kotlinlogging.KotlinLogging
 import moe.radar.mihon_gateway.extension.ExtensionManager
 import moe.radar.mihon_gateway.proto.*
 import moe.radar.mihon_gateway.source.SourceManager
+import moe.radar.mihon_gateway.state.StatelessState
+import xyz.nulldev.androidcompat.androidimpl.CustomContext
 
 /**
  * Stateless gRPC service implementation for manga sources.
@@ -145,6 +156,186 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             .apply { sourceInfo.baseUrl?.let { setBaseUrl(it) } }
             .setIconUrl("")
             .build()
+    }
+
+    // ==================== Source Preferences ====================
+
+    override suspend fun getSourcePreferences(request: GetSourcePreferencesRequest): GetSourcePreferencesResponse {
+        logger.debug { "getSourcePreferences: sourceId=${request.sourceId}" }
+
+        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        if (source !is ConfigurableSource) {
+            throw io.grpc.StatusException(
+                io.grpc.Status.FAILED_PRECONDITION.withDescription("Source ${request.sourceId} is not configurable")
+            )
+        }
+
+        val screen = getOrCreatePreferenceScreen(request.sourceId, source)
+        return buildPreferencesResponse(screen)
+    }
+
+    override suspend fun setSourcePreference(request: SetSourcePreferenceRequest): GetSourcePreferencesResponse {
+        logger.debug { "setSourcePreference: sourceId=${request.sourceId}, key=${request.key}" }
+
+        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        if (source !is ConfigurableSource) {
+            throw io.grpc.StatusException(
+                io.grpc.Status.FAILED_PRECONDITION.withDescription("Source ${request.sourceId} is not configurable")
+            )
+        }
+
+        val screen = getOrCreatePreferenceScreen(request.sourceId, source)
+        val pref = screen.preferences.find { it.key == request.key }
+            ?: throw io.grpc.StatusException(
+                io.grpc.Status.NOT_FOUND.withDescription("Preference key '${request.key}' not found")
+            )
+
+        // Extract and validate the value
+        val newValue: Any = when {
+            request.hasBoolValue() -> {
+                if (pref.defaultValueType != "Boolean") {
+                    throw io.grpc.StatusException(
+                        io.grpc.Status.INVALID_ARGUMENT.withDescription(
+                            "Expected ${pref.defaultValueType} but got Boolean for key '${request.key}'"
+                        )
+                    )
+                }
+                request.boolValue
+            }
+            request.hasStringValue() -> {
+                if (pref.defaultValueType != "String") {
+                    throw io.grpc.StatusException(
+                        io.grpc.Status.INVALID_ARGUMENT.withDescription(
+                            "Expected ${pref.defaultValueType} but got String for key '${request.key}'"
+                        )
+                    )
+                }
+                // Validate against allowed values for ListPreference
+                if (pref is AndroidListPreference) {
+                    val entryValues = pref.entryValues
+                    if (entryValues != null && entryValues.none { it.toString() == request.stringValue }) {
+                        throw io.grpc.StatusException(
+                            io.grpc.Status.INVALID_ARGUMENT.withDescription(
+                                "Value '${request.stringValue}' is not a valid entry for key '${request.key}'"
+                            )
+                        )
+                    }
+                }
+                request.stringValue
+            }
+            request.hasStringListValue() -> {
+                if (pref.defaultValueType != "Set<String>") {
+                    throw io.grpc.StatusException(
+                        io.grpc.Status.INVALID_ARGUMENT.withDescription(
+                            "Expected ${pref.defaultValueType} but got Set<String> for key '${request.key}'"
+                        )
+                    )
+                }
+                request.stringListValue.valuesList.toSet()
+            }
+            else -> throw io.grpc.StatusException(
+                io.grpc.Status.INVALID_ARGUMENT.withDescription("No value provided")
+            )
+        }
+
+        // Call change listener — extension may reject
+        if (!pref.callChangeListener(newValue)) {
+            throw io.grpc.StatusException(
+                io.grpc.Status.FAILED_PRECONDITION.withDescription("Extension rejected value change for key '${request.key}'")
+            )
+        }
+
+        // Persist to SharedPreferences
+        pref.saveNewValue(newValue)
+
+        // Reload source so new constructor picks up updated prefs
+        val extensionPkgName = StatelessState.sources[request.sourceId]?.extensionPkgName
+            ?: throw io.grpc.StatusException(
+                io.grpc.Status.INTERNAL.withDescription("Cannot find extension package for source ${request.sourceId}")
+            )
+        ExtensionManager.reloadExtensionSources(extensionPkgName)
+
+        // Build fresh preference screen for the reloaded source
+        val reloadedSource = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        if (reloadedSource !is ConfigurableSource) {
+            throw io.grpc.StatusException(
+                io.grpc.Status.INTERNAL.withDescription("Source ${request.sourceId} is no longer configurable after reload")
+            )
+        }
+        val freshScreen = getOrCreatePreferenceScreen(request.sourceId, reloadedSource)
+        return buildPreferencesResponse(freshScreen)
+    }
+
+    private fun getOrCreatePreferenceScreen(sourceId: Long, source: ConfigurableSource): PreferenceScreen {
+        return StatelessState.preferenceScreenCache.getOrPut(sourceId) {
+            val screen = PreferenceScreen(CustomContext())
+            screen.sharedPreferences = source.sourcePreferences()
+            source.setupPreferenceScreen(screen)
+            screen
+        }
+    }
+
+    private fun buildPreferencesResponse(screen: PreferenceScreen): GetSourcePreferencesResponse {
+        val protoPrefs = screen.preferences
+            .filter { it.key != null }
+            .mapNotNull { convertPreferenceToProto(it) }
+
+        return GetSourcePreferencesResponse.newBuilder()
+            .addAllPreferences(protoPrefs)
+            .build()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun convertPreferenceToProto(pref: AndroidPreference): SourcePreference? {
+        val builder = SourcePreference.newBuilder()
+            .setKey(pref.key)
+            .setTitle(pref.title?.toString() ?: "")
+            .setSummary(pref.summary?.toString() ?: "")
+            .setVisible(pref.visible)
+            .setDefaultValueType(pref.defaultValueType)
+
+        when (pref) {
+            is SwitchPreferenceCompat -> {
+                builder.switchPreference = moe.radar.mihon_gateway.proto.SwitchPreference.newBuilder()
+                    .setCurrentValue(pref.currentValue as Boolean)
+                    .build()
+            }
+            is AndroidCheckBoxPreference -> {
+                builder.checkBoxPreference = moe.radar.mihon_gateway.proto.CheckBoxPreference.newBuilder()
+                    .setCurrentValue(pref.currentValue as Boolean)
+                    .build()
+            }
+            is AndroidEditTextPreference -> {
+                builder.editTextPreference = moe.radar.mihon_gateway.proto.EditTextPreference.newBuilder()
+                    .setCurrentValue(pref.currentValue as? String ?: "")
+                    .setDialogTitle(pref.dialogTitle?.toString() ?: "")
+                    .setDialogMessage(pref.dialogMessage?.toString() ?: "")
+                    .build()
+            }
+            is AndroidListPreference -> {
+                builder.listPreference = moe.radar.mihon_gateway.proto.ListPreference.newBuilder()
+                    .setCurrentValue(pref.currentValue as? String ?: "")
+                    .addAllEntries(pref.entries?.map { it.toString() } ?: emptyList())
+                    .addAllEntryValues(pref.entryValues?.map { it.toString() } ?: emptyList())
+                    .build()
+            }
+            is AndroidMultiSelectListPreference -> {
+                val currentSet = pref.currentValue as? Set<String> ?: emptySet()
+                builder.multiSelectListPreference = moe.radar.mihon_gateway.proto.MultiSelectListPreference.newBuilder()
+                    .addAllCurrentValue(currentSet)
+                    .addAllEntries(pref.entries?.map { it.toString() } ?: emptyList())
+                    .addAllEntryValues(pref.entryValues?.map { it.toString() } ?: emptyList())
+                    .setDialogTitle(pref.dialogTitle?.toString() ?: "")
+                    .setDialogMessage(pref.dialogMessage?.toString() ?: "")
+                    .build()
+            }
+            else -> {
+                logger.debug { "Skipping unsupported preference type: ${pref.javaClass.simpleName} (key=${pref.key})" }
+                return null
+            }
+        }
+
+        return builder.build()
     }
 
     // ==================== Manga Operations (Stateless!) ====================

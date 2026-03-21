@@ -6,9 +6,11 @@ import moe.radar.mihon_gateway.test.BaseTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertEquals
 
 /**
@@ -248,6 +250,37 @@ class ExtensionManagerTest : BaseTest() {
         pkgNames.forEach { pkgName ->
             val sources = StatelessState.sources.filter { it.value.extensionPkgName == pkgName }
             assertTrue(sources.isNotEmpty(), "$pkgName should have loaded sources")
+        }
+    }
+
+    @Test
+    @DisplayName("reloadExtensionSources re-instantiates sources")
+    fun testReloadExtensionSources(): Unit = runBlocking {
+        ExtensionManager.fetchExtensionsFromGitHub()
+        val pkgName = "eu.kanade.tachiyomi.extension.en.asurascans"
+        val installResult = ExtensionManager.installExtension(pkgName)
+        assertTrue(installResult.isSuccess, "Installation should succeed")
+
+        // Capture original source instance
+        val sourcesBefore = StatelessState.sources.filter { it.value.extensionPkgName == pkgName }
+        assertTrue(sourcesBefore.isNotEmpty(), "Should have loaded sources")
+        val firstSourceId = sourcesBefore.keys.first()
+        val originalInstance = StatelessState.loadedSources[firstSourceId]
+
+        // Reload
+        ExtensionManager.reloadExtensionSources(pkgName)
+
+        // Source should be a different instance
+        val reloadedInstance = StatelessState.loadedSources[firstSourceId]
+        assertNotNull(reloadedInstance, "Source should still exist after reload")
+        assertNotSame(originalInstance, reloadedInstance, "Source should be a new instance after reload")
+    }
+
+    @Test
+    @DisplayName("reloadExtensionSources throws for unknown package")
+    fun testReloadExtensionSourcesUnknownPackage() {
+        assertFailsWith<IllegalArgumentException> {
+            ExtensionManager.reloadExtensionSources("com.fake.nonexistent")
         }
     }
 

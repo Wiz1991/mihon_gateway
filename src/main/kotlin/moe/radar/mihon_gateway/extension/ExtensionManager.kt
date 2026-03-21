@@ -33,6 +33,8 @@ import xyz.nulldev.androidcompat.androidimpl.CustomContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -47,6 +49,7 @@ object ExtensionManager {
     private val logger = KotlinLogging.logger {}
     private val applicationDirs = ApplicationDirs.instance
     private val networkHelper = NetworkHelper(CustomContext())
+    private val reloadLocks = ConcurrentHashMap<String, ReentrantLock>()
 
     /**
      * Fetch extension list from GitHub repositories
@@ -283,6 +286,30 @@ object ExtensionManager {
     }
 
     /**
+     * Reload sources for an installed extension.
+     * Clears old source instances and preference caches, then re-instantiates
+     * from the existing JAR. The new source constructor reads updated
+     * SharedPreferences from disk.
+     */
+    fun reloadExtensionSources(pkgName: String) {
+        val lock = reloadLocks.computeIfAbsent(pkgName) { ReentrantLock() }
+        lock.lock()
+        try {
+            val jarPath = StatelessState.loadedJars[pkgName]
+                ?: throw IllegalArgumentException("Extension $pkgName is not installed (no JAR path)")
+            val classFQName = StatelessState.extensions[pkgName]?.classFQName
+                ?: throw IllegalArgumentException("Extension $pkgName has no class name")
+
+            logger.debug { "Reloading sources for $pkgName" }
+            StatelessState.removeSourcesByPkgName(pkgName)
+            loadSourcesFromJar(jarPath, classFQName, pkgName)
+            logger.info { "Reloaded sources for $pkgName" }
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
      * Uninstall an extension
      */
     fun uninstallExtension(pkgName: String): Result<String> {
@@ -292,12 +319,8 @@ object ExtensionManager {
             val jarPath = StatelessState.loadedJars[pkgName]
                 ?: throw IllegalArgumentException("Extension $pkgName is not installed")
 
-            // Remove sources
-            val sourcesToRemove = StatelessState.sources.filter { it.value.extensionPkgName == pkgName }
-            sourcesToRemove.keys.forEach { sourceId ->
-                StatelessState.sources.remove(sourceId)
-                StatelessState.loadedSources.remove(sourceId)
-            }
+            // Remove sources + preference cache
+            StatelessState.removeSourcesByPkgName(pkgName)
 
             // Remove JAR file
             File(jarPath).delete()

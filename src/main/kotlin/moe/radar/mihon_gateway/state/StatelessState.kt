@@ -1,5 +1,6 @@
 package moe.radar.mihon_gateway.state
 
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.CatalogueSource
 import suwayomi.tachidesk.manga.impl.extension.github.OnlineExtension
 import java.util.concurrent.ConcurrentHashMap
@@ -35,6 +36,12 @@ object StatelessState {
     val loadedJars = ConcurrentHashMap<String, String>()
 
     /**
+     * Cached PreferenceScreen per source ID.
+     * Populated on first GetSourcePreferences call, cleared on source reload.
+     */
+    val preferenceScreenCache = ConcurrentHashMap<Long, PreferenceScreen>()
+
+    /**
      * Extension list from GitHub - cached for 60 seconds
      */
     var extensionListCache: List<OnlineExtension>? = null
@@ -52,6 +59,20 @@ object StatelessState {
     }
 
     /**
+     * Remove all sources (and caches) belonging to a given package name.
+     * Returns the list of removed source IDs.
+     */
+    fun removeSourcesByPkgName(pkgName: String): List<Long> {
+        val removedIds = sources.filter { it.value.extensionPkgName == pkgName }.keys.toList()
+        removedIds.forEach { sourceId ->
+            sources.remove(sourceId)
+            loadedSources.remove(sourceId)
+            preferenceScreenCache.remove(sourceId)
+        }
+        return removedIds
+    }
+
+    /**
      * Clear all state (useful for testing)
      */
     fun clear() {
@@ -59,6 +80,7 @@ object StatelessState {
         sources.clear()
         loadedSources.clear()
         loadedJars.clear()
+        preferenceScreenCache.clear()
         extensionListCache = null
         extensionListCacheTime = 0
     }

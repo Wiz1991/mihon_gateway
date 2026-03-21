@@ -1,10 +1,12 @@
 package moe.radar.mihon_gateway.state
 
+import androidx.preference.PreferenceScreen
 import moe.radar.mihon_gateway.test.BaseTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import suwayomi.tachidesk.manga.impl.extension.github.OnlineExtension
+import xyz.nulldev.androidcompat.androidimpl.CustomContext
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertEquals
@@ -159,6 +161,66 @@ class StatelessStateTest : BaseTest() {
 
         // Verify cache contains the extension
         assertEquals(1, StatelessState.extensionListCache?.size, "Cache should contain 1 extension")
+    }
+
+    @Test
+    @DisplayName("removeSourcesByPkgName removes all sources for package")
+    fun testRemoveSourcesByPkgName() {
+        // Add sources for two different packages
+        val pkg1 = "com.test.pkg1"
+        val pkg2 = "com.test.pkg2"
+
+        StatelessState.sources[1L] = SourceMetadata(1L, "Source1", "en", pkg1, false)
+        StatelessState.sources[2L] = SourceMetadata(2L, "Source2", "en", pkg1, false)
+        StatelessState.sources[3L] = SourceMetadata(3L, "Source3", "ja", pkg2, false)
+
+        // Add dummy loaded sources
+        // (We can't easily create CatalogueSource instances, so just test the metadata maps)
+
+        // Add preference screen cache entries
+        StatelessState.preferenceScreenCache[1L] = PreferenceScreen(CustomContext())
+        StatelessState.preferenceScreenCache[2L] = PreferenceScreen(CustomContext())
+        StatelessState.preferenceScreenCache[3L] = PreferenceScreen(CustomContext())
+
+        // Remove pkg1 sources
+        val removedIds = StatelessState.removeSourcesByPkgName(pkg1)
+
+        // Verify correct sources removed
+        assertEquals(listOf(1L, 2L), removedIds.sorted())
+        assertFalse(StatelessState.sources.containsKey(1L))
+        assertFalse(StatelessState.sources.containsKey(2L))
+        assertTrue(StatelessState.sources.containsKey(3L))
+
+        // Verify preference cache also cleaned
+        assertFalse(StatelessState.preferenceScreenCache.containsKey(1L))
+        assertFalse(StatelessState.preferenceScreenCache.containsKey(2L))
+        assertTrue(StatelessState.preferenceScreenCache.containsKey(3L))
+    }
+
+    @Test
+    @DisplayName("removeSourcesByPkgName returns removed IDs")
+    fun testRemoveSourcesByPkgNameReturnValue() {
+        StatelessState.sources[10L] = SourceMetadata(10L, "S1", "en", "com.test.a", false)
+        StatelessState.sources[20L] = SourceMetadata(20L, "S2", "en", "com.test.b", false)
+
+        val removed = StatelessState.removeSourcesByPkgName("com.test.a")
+        assertEquals(listOf(10L), removed)
+
+        val removedNone = StatelessState.removeSourcesByPkgName("com.test.nonexistent")
+        assertTrue(removedNone.isEmpty())
+    }
+
+    @Test
+    @DisplayName("clear also clears preferenceScreenCache")
+    fun testClearAlsoClearsPreferenceScreenCache() {
+        StatelessState.preferenceScreenCache[1L] = PreferenceScreen(CustomContext())
+        StatelessState.preferenceScreenCache[2L] = PreferenceScreen(CustomContext())
+
+        assertTrue(StatelessState.preferenceScreenCache.isNotEmpty())
+
+        StatelessState.clear()
+
+        assertTrue(StatelessState.preferenceScreenCache.isEmpty())
     }
 
     @Test

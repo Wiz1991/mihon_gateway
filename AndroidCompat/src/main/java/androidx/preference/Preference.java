@@ -101,6 +101,9 @@ public class Preference {
 
     /** Tachidesk specific API */
     public String getDefaultValueType() {
+        if (defaultValue == null) {
+            return "String";
+        }
         return defaultValue.getClass().getSimpleName();
     }
 
