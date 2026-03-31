@@ -10,6 +10,7 @@ import androidx.preference.CheckBoxPreference as AndroidCheckBoxPreference
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.online.LicensedMangaChaptersException
 import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -536,11 +537,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         val details = try {
             source.getMangaDetails(sManga)
         } catch (e: HttpException) {
-            throw grpcError(
-                mapHttpStatus(e.code),
-                ErrorCode.HTTP_ERROR,
-                "HTTP ${e.code} fetching manga details from source"
-            )
+            throw grpcHttpError(e.code, "Failed to fetch manga details from source")
         } catch (e: Exception) {
             logger.error(e) { "getMangaDetails failed for sourceId=${request.sourceId}, url=${request.mangaUrl}" }
             throw grpcError(
@@ -580,11 +577,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
                     .setHasNextPage(false)
                     .build()
             }
-            throw grpcError(
-                mapHttpStatus(e.code),
-                ErrorCode.HTTP_ERROR,
-                "HTTP ${e.code} during search"
-            )
+            throw grpcHttpError(e.code, "Search failed")
         } catch (e: Exception) {
             logger.error(e) { "searchManga failed for sourceId=${request.sourceId}" }
             throw grpcError(
@@ -616,11 +609,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         val results = try {
             source.getPopularManga(request.page)
         } catch (e: HttpException) {
-            throw grpcError(
-                mapHttpStatus(e.code),
-                ErrorCode.HTTP_ERROR,
-                "HTTP ${e.code} fetching popular manga"
-            )
+            throw grpcHttpError(e.code, "Failed to fetch popular manga")
         } catch (e: Exception) {
             logger.error(e) { "getPopularManga failed for sourceId=${request.sourceId}" }
             throw grpcError(
@@ -660,11 +649,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         val results = try {
             source.getLatestUpdates(request.page)
         } catch (e: HttpException) {
-            throw grpcError(
-                mapHttpStatus(e.code),
-                ErrorCode.HTTP_ERROR,
-                "HTTP ${e.code} fetching latest manga"
-            )
+            throw grpcHttpError(e.code, "Failed to fetch latest manga")
         } catch (e: Exception) {
             logger.error(e) { "getLatestManga failed for sourceId=${request.sourceId}" }
             throw grpcError(
@@ -702,12 +687,14 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
 
         val chapters = try {
             source.getChapterList(sManga)
-        } catch (e: HttpException) {
+        } catch (e: LicensedMangaChaptersException) {
             throw grpcError(
-                mapHttpStatus(e.code),
-                ErrorCode.HTTP_ERROR,
-                "HTTP ${e.code} fetching chapter list"
+                Status.FAILED_PRECONDITION,
+                ErrorCode.MANGA_LICENSED,
+                "Manga is licensed — no chapters available"
             )
+        } catch (e: HttpException) {
+            throw grpcHttpError(e.code, "Failed to fetch chapter list")
         } catch (e: Exception) {
             logger.error(e) { "getChapterList failed for sourceId=${request.sourceId}, mangaUrl=${request.mangaUrl}" }
             throw grpcError(
@@ -750,11 +737,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         val pages = try {
             source.getPageList(sChapter)
         } catch (e: HttpException) {
-            throw grpcError(
-                mapHttpStatus(e.code),
-                ErrorCode.HTTP_ERROR,
-                "HTTP ${e.code} fetching page list"
-            )
+            throw grpcHttpError(e.code, "Failed to fetch page list")
         } catch (e: Exception) {
             logger.error(e) { "getPageList failed for sourceId=${request.sourceId}, chapterUrl=${request.chapterUrl}" }
             throw grpcError(
@@ -786,19 +769,6 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
                 ErrorCode.SOURCE_NOT_FOUND,
                 "Source $sourceId not found. Is the extension installed?"
             )
-
-    /**
-     * Map HTTP status code to gRPC Status.
-     */
-    private fun mapHttpStatus(httpCode: Int): Status = when (httpCode) {
-        400 -> Status.INVALID_ARGUMENT
-        401, 403 -> Status.PERMISSION_DENIED
-        404 -> Status.NOT_FOUND
-        408 -> Status.DEADLINE_EXCEEDED
-        429 -> Status.RESOURCE_EXHAUSTED
-        in 500..599 -> Status.UNAVAILABLE
-        else -> Status.INTERNAL
-    }
 
     // ==================== Helper Extensions ====================
 

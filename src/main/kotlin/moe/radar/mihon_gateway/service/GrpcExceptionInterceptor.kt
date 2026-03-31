@@ -1,5 +1,7 @@
 package moe.radar.mihon_gateway.service
 
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.source.online.LicensedMangaChaptersException
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.grpc.ForwardingServerCallListener.SimpleForwardingServerCallListener
 import io.grpc.Metadata
@@ -9,7 +11,6 @@ import io.grpc.ServerInterceptor
 import io.grpc.Status
 import io.grpc.StatusException
 import io.grpc.StatusRuntimeException
-import eu.kanade.tachiyomi.network.HttpException
 
 /**
  * gRPC server interceptor that catches unhandled exceptions and maps them
@@ -33,12 +34,11 @@ class GrpcExceptionInterceptor : ServerInterceptor {
                 try {
                     super.onHalfClose()
                 } catch (e: StatusException) {
-                    // Already a proper gRPC status — pass through
                     closeWithException(call, e.status, e.trailers ?: Metadata(), e)
                 } catch (e: StatusRuntimeException) {
                     closeWithException(call, e.status, e.trailers ?: Metadata(), e)
                 } catch (e: Exception) {
-                    val (status, metadata) = mapException(e, call.methodDescriptor.fullMethodName)
+                    val (status, metadata) = mapException(e)
                     closeWithException(call, status, metadata, e)
                 }
             }
@@ -50,7 +50,6 @@ class GrpcExceptionInterceptor : ServerInterceptor {
                 cause: Exception,
             ) {
                 if (status.code != Status.Code.OK) {
-                    val level = if (status.code == Status.Code.INTERNAL) "error" else "warn"
                     logger.atLevel(
                         if (status.code == Status.Code.INTERNAL)
                             io.github.oshai.kotlinlogging.Level.ERROR
@@ -68,24 +67,36 @@ class GrpcExceptionInterceptor : ServerInterceptor {
 
     /**
      * Map common exception types to appropriate gRPC status codes.
+     * This is the safety net for anything not caught by the service methods.
      */
-    private fun mapException(e: Exception, methodName: String): Pair<Status, Metadata> {
+    private fun mapException(e: Exception): Pair<Status, Metadata> {
         val metadata = Metadata()
 
         return when (e) {
-            is IllegalArgumentException -> {
-                val (errorCode, status) = classifyIllegalArgument(e.message)
-                metadata.put(ERROR_CODE_KEY, errorCode.code)
+            is HttpException -> {
+                metadata.put(ERROR_CODE_KEY, ErrorCode.HTTP_ERROR.code)
+                metadata.put(HTTP_STATUS_KEY, e.code.toString())
                 Pair(
-                    status.withDescription("[${errorCode}] ${e.message}"),
+                    mapHttpCodeToGrpcStatus(e.code)
+                        .withDescription("[${ErrorCode.HTTP_ERROR.code}] HTTP ${e.code}"),
                     metadata
                 )
             }
 
-            is HttpException -> {
-                metadata.put(ERROR_CODE_KEY, ErrorCode.HTTP_ERROR.code)
+            is LicensedMangaChaptersException -> {
+                metadata.put(ERROR_CODE_KEY, ErrorCode.MANGA_LICENSED.code)
                 Pair(
-                    mapHttpCode(e.code).withDescription("[${ErrorCode.HTTP_ERROR}] HTTP error ${e.code}"),
+                    Status.FAILED_PRECONDITION
+                        .withDescription("[${ErrorCode.MANGA_LICENSED.code}] ${e.message}"),
+                    metadata
+                )
+            }
+
+            is IllegalArgumentException -> {
+                val (errorCode, status) = classifyIllegalArgument(e.message)
+                metadata.put(ERROR_CODE_KEY, errorCode.code)
+                Pair(
+                    status.withDescription("[${errorCode.code}] ${e.message}"),
                     metadata
                 )
             }
@@ -93,7 +104,8 @@ class GrpcExceptionInterceptor : ServerInterceptor {
             is java.net.SocketTimeoutException -> {
                 metadata.put(ERROR_CODE_KEY, ErrorCode.UPSTREAM_FAILED.code)
                 Pair(
-                    Status.UNAVAILABLE.withDescription("[${ErrorCode.UPSTREAM_FAILED}] Request timed out: ${e.message}"),
+                    Status.UNAVAILABLE
+                        .withDescription("[${ErrorCode.UPSTREAM_FAILED.code}] Request timed out: ${e.message}"),
                     metadata
                 )
             }
@@ -101,7 +113,8 @@ class GrpcExceptionInterceptor : ServerInterceptor {
             is java.net.UnknownHostException -> {
                 metadata.put(ERROR_CODE_KEY, ErrorCode.UPSTREAM_FAILED.code)
                 Pair(
-                    Status.UNAVAILABLE.withDescription("[${ErrorCode.UPSTREAM_FAILED}] DNS resolution failed: ${e.message}"),
+                    Status.UNAVAILABLE
+                        .withDescription("[${ErrorCode.UPSTREAM_FAILED.code}] DNS resolution failed: ${e.message}"),
                     metadata
                 )
             }
@@ -109,7 +122,8 @@ class GrpcExceptionInterceptor : ServerInterceptor {
             is java.net.ConnectException -> {
                 metadata.put(ERROR_CODE_KEY, ErrorCode.UPSTREAM_FAILED.code)
                 Pair(
-                    Status.UNAVAILABLE.withDescription("[${ErrorCode.UPSTREAM_FAILED}] Connection failed: ${e.message}"),
+                    Status.UNAVAILABLE
+                        .withDescription("[${ErrorCode.UPSTREAM_FAILED.code}] Connection failed: ${e.message}"),
                     metadata
                 )
             }
@@ -117,7 +131,8 @@ class GrpcExceptionInterceptor : ServerInterceptor {
             is java.io.IOException -> {
                 metadata.put(ERROR_CODE_KEY, ErrorCode.UPSTREAM_FAILED.code)
                 Pair(
-                    Status.UNAVAILABLE.withDescription("[${ErrorCode.UPSTREAM_FAILED}] I/O error: ${e.message}"),
+                    Status.UNAVAILABLE
+                        .withDescription("[${ErrorCode.UPSTREAM_FAILED.code}] I/O error: ${e.message}"),
                     metadata
                 )
             }
@@ -125,7 +140,8 @@ class GrpcExceptionInterceptor : ServerInterceptor {
             else -> {
                 metadata.put(ERROR_CODE_KEY, ErrorCode.INTERNAL_ERROR.code)
                 Pair(
-                    Status.INTERNAL.withDescription("[${ErrorCode.INTERNAL_ERROR}] ${e.message}"),
+                    Status.INTERNAL
+                        .withDescription("[${ErrorCode.INTERNAL_ERROR.code}] ${e.message}"),
                     metadata
                 )
             }
@@ -133,8 +149,7 @@ class GrpcExceptionInterceptor : ServerInterceptor {
     }
 
     /**
-     * Classify IllegalArgumentException based on message content
-     * to give more specific error codes.
+     * Classify IllegalArgumentException based on message content.
      */
     private fun classifyIllegalArgument(message: String?): Pair<ErrorCode, Status> {
         val msg = message?.lowercase() ?: return Pair(ErrorCode.INVALID_ARGUMENT, Status.INVALID_ARGUMENT)
@@ -150,27 +165,10 @@ class GrpcExceptionInterceptor : ServerInterceptor {
                 Pair(ErrorCode.EXTENSION_INVALID, Status.INVALID_ARGUMENT)
             msg.contains("lib version") ->
                 Pair(ErrorCode.EXTENSION_INCOMPATIBLE, Status.FAILED_PRECONDITION)
-            msg.contains("no repository url") || msg.contains("has no repository") ->
-                Pair(ErrorCode.EXTENSION_NOT_FOUND, Status.FAILED_PRECONDITION)
             msg.contains("has no class name") ->
                 Pair(ErrorCode.EXTENSION_INVALID, Status.INTERNAL)
             else ->
                 Pair(ErrorCode.INVALID_ARGUMENT, Status.INVALID_ARGUMENT)
-        }
-    }
-
-    /**
-     * Map HTTP status codes to gRPC status codes.
-     */
-    private fun mapHttpCode(httpCode: Int): Status {
-        return when (httpCode) {
-            400 -> Status.INVALID_ARGUMENT
-            401, 403 -> Status.PERMISSION_DENIED
-            404 -> Status.NOT_FOUND
-            408 -> Status.DEADLINE_EXCEEDED
-            429 -> Status.RESOURCE_EXHAUSTED
-            in 500..599 -> Status.UNAVAILABLE
-            else -> Status.INTERNAL
         }
     }
 }
