@@ -10,6 +10,7 @@ import androidx.preference.CheckBoxPreference as AndroidCheckBoxPreference
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.online.LicensedMangaChaptersException
 import eu.kanade.tachiyomi.util.chapter.ChapterRecognition
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -17,6 +18,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.grpc.Status
 import moe.radar.mihon_gateway.extension.ExtensionManager
 import moe.radar.mihon_gateway.proto.*
 import moe.radar.mihon_gateway.source.SourceManager
@@ -94,8 +96,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         ExtensionManager.uninstallExtension(request.pkgName)
             .onFailure { error ->
                 logger.error(error) { "Failed to uninstall extension: ${request.pkgName}" }
-                throw io.grpc.StatusException(
-                    io.grpc.Status.INTERNAL.withDescription(error.message ?: "Unknown error")
+                throw grpcError(
+                    Status.NOT_FOUND,
+                    ErrorCode.EXTENSION_NOT_INSTALLED,
+                    "Extension ${request.pkgName} is not installed"
                 )
             }
 
@@ -183,8 +187,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         logger.debug { "getSource: ${request.sourceId}" }
 
         val sourceInfo = SourceManager.getSourceInfo(request.sourceId)
-            ?: throw io.grpc.StatusException(
-                io.grpc.Status.NOT_FOUND.withDescription("Source ${request.sourceId} not found")
+            ?: throw grpcError(
+                Status.NOT_FOUND,
+                ErrorCode.SOURCE_NOT_FOUND,
+                "Source ${request.sourceId} not found"
             )
 
         val iconUrl = sourceInfo.extensionPkgName
@@ -209,10 +215,12 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun getSourcePreferences(request: GetSourcePreferencesRequest): GetSourcePreferencesResponse {
         logger.debug { "getSourcePreferences: sourceId=${request.sourceId}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
         if (source !is ConfigurableSource) {
-            throw io.grpc.StatusException(
-                io.grpc.Status.FAILED_PRECONDITION.withDescription("Source ${request.sourceId} is not configurable")
+            throw grpcError(
+                Status.FAILED_PRECONDITION,
+                ErrorCode.SOURCE_NOT_CONFIGURABLE,
+                "Source ${request.sourceId} is not configurable"
             )
         }
 
@@ -223,47 +231,51 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun setSourcePreference(request: SetSourcePreferenceRequest): GetSourcePreferencesResponse {
         logger.debug { "setSourcePreference: sourceId=${request.sourceId}, key=${request.key}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
         if (source !is ConfigurableSource) {
-            throw io.grpc.StatusException(
-                io.grpc.Status.FAILED_PRECONDITION.withDescription("Source ${request.sourceId} is not configurable")
+            throw grpcError(
+                Status.FAILED_PRECONDITION,
+                ErrorCode.SOURCE_NOT_CONFIGURABLE,
+                "Source ${request.sourceId} is not configurable"
             )
         }
 
         val screen = getOrCreatePreferenceScreen(request.sourceId, source)
         val pref = screen.preferences.find { it.key == request.key }
-            ?: throw io.grpc.StatusException(
-                io.grpc.Status.NOT_FOUND.withDescription("Preference key '${request.key}' not found")
+            ?: throw grpcError(
+                Status.NOT_FOUND,
+                ErrorCode.PREFERENCE_NOT_FOUND,
+                "Preference key '${request.key}' not found"
             )
 
         // Extract and validate the value
         val newValue: Any = when {
             request.hasBoolValue() -> {
                 if (pref.defaultValueType != "Boolean") {
-                    throw io.grpc.StatusException(
-                        io.grpc.Status.INVALID_ARGUMENT.withDescription(
-                            "Expected ${pref.defaultValueType} but got Boolean for key '${request.key}'"
-                        )
+                    throw grpcError(
+                        Status.INVALID_ARGUMENT,
+                        ErrorCode.PREFERENCE_TYPE_MISMATCH,
+                        "Expected ${pref.defaultValueType} but got Boolean for key '${request.key}'"
                     )
                 }
                 request.boolValue
             }
             request.hasStringValue() -> {
                 if (pref.defaultValueType != "String") {
-                    throw io.grpc.StatusException(
-                        io.grpc.Status.INVALID_ARGUMENT.withDescription(
-                            "Expected ${pref.defaultValueType} but got String for key '${request.key}'"
-                        )
+                    throw grpcError(
+                        Status.INVALID_ARGUMENT,
+                        ErrorCode.PREFERENCE_TYPE_MISMATCH,
+                        "Expected ${pref.defaultValueType} but got String for key '${request.key}'"
                     )
                 }
                 // Validate against allowed values for ListPreference
                 if (pref is AndroidListPreference) {
                     val entryValues = pref.entryValues
                     if (entryValues != null && entryValues.none { it.toString() == request.stringValue }) {
-                        throw io.grpc.StatusException(
-                            io.grpc.Status.INVALID_ARGUMENT.withDescription(
-                                "Value '${request.stringValue}' is not a valid entry for key '${request.key}'"
-                            )
+                        throw grpcError(
+                            Status.INVALID_ARGUMENT,
+                            ErrorCode.PREFERENCE_VALUE_INVALID,
+                            "Value '${request.stringValue}' is not a valid entry for key '${request.key}'"
                         )
                     }
                 }
@@ -271,23 +283,27 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             }
             request.hasStringListValue() -> {
                 if (pref.defaultValueType != "Set<String>") {
-                    throw io.grpc.StatusException(
-                        io.grpc.Status.INVALID_ARGUMENT.withDescription(
-                            "Expected ${pref.defaultValueType} but got Set<String> for key '${request.key}'"
-                        )
+                    throw grpcError(
+                        Status.INVALID_ARGUMENT,
+                        ErrorCode.PREFERENCE_TYPE_MISMATCH,
+                        "Expected ${pref.defaultValueType} but got Set<String> for key '${request.key}'"
                     )
                 }
                 request.stringListValue.valuesList.toSet()
             }
-            else -> throw io.grpc.StatusException(
-                io.grpc.Status.INVALID_ARGUMENT.withDescription("No value provided")
+            else -> throw grpcError(
+                Status.INVALID_ARGUMENT,
+                ErrorCode.PREFERENCE_NO_VALUE,
+                "No value provided in request"
             )
         }
 
         // Call change listener — extension may reject
         if (!pref.callChangeListener(newValue)) {
-            throw io.grpc.StatusException(
-                io.grpc.Status.FAILED_PRECONDITION.withDescription("Extension rejected value change for key '${request.key}'")
+            throw grpcError(
+                Status.FAILED_PRECONDITION,
+                ErrorCode.PREFERENCE_VALUE_REJECTED,
+                "Extension rejected value change for key '${request.key}'"
             )
         }
 
@@ -296,16 +312,20 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
 
         // Reload source so new constructor picks up updated prefs
         val extensionPkgName = StatelessState.sources[request.sourceId]?.extensionPkgName
-            ?: throw io.grpc.StatusException(
-                io.grpc.Status.INTERNAL.withDescription("Cannot find extension package for source ${request.sourceId}")
+            ?: throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.INTERNAL_ERROR,
+                "Cannot find extension package for source ${request.sourceId}"
             )
         ExtensionManager.reloadExtensionSources(extensionPkgName)
 
         // Build fresh preference screen for the reloaded source
-        val reloadedSource = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val reloadedSource = getSourceOrThrow(request.sourceId)
         if (reloadedSource !is ConfigurableSource) {
-            throw io.grpc.StatusException(
-                io.grpc.Status.INTERNAL.withDescription("Source ${request.sourceId} is no longer configurable after reload")
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.INTERNAL_ERROR,
+                "Source ${request.sourceId} is no longer configurable after reload"
             )
         }
         val freshScreen = getOrCreatePreferenceScreen(request.sourceId, reloadedSource)
@@ -390,8 +410,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         logger.debug { "setCookies: url=${request.url}, count=${request.cookiesList.size}" }
 
         val httpUrl = request.url.toHttpUrlOrNull()
-            ?: throw io.grpc.StatusException(
-                io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid URL: ${request.url}")
+            ?: throw grpcError(
+                Status.INVALID_ARGUMENT,
+                ErrorCode.INVALID_URL,
+                "Invalid URL: ${request.url}"
             )
 
         val cookies = request.cookiesList.map { cookieData ->
@@ -420,8 +442,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         logger.debug { "getCookies: url=${request.url}" }
 
         val httpUrl = request.url.toHttpUrlOrNull()
-            ?: throw io.grpc.StatusException(
-                io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid URL: ${request.url}")
+            ?: throw grpcError(
+                Status.INVALID_ARGUMENT,
+                ErrorCode.INVALID_URL,
+                "Invalid URL: ${request.url}"
             )
 
         val cookies = networkHelper.cookieStore.get(httpUrl)
@@ -450,8 +474,10 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             val uri = try {
                 URI(request.url)
             } catch (e: Exception) {
-                throw io.grpc.StatusException(
-                    io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid URL: ${request.url}")
+                throw grpcError(
+                    Status.INVALID_ARGUMENT,
+                    ErrorCode.INVALID_URL,
+                    "Invalid URL: ${request.url}"
                 )
             }
             networkHelper.cookieStore.remove(uri)
@@ -500,7 +526,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun getMangaDetails(request: GetMangaDetailsRequest): Manga {
         logger.debug { "getMangaDetails: sourceId=${request.sourceId}, url=${request.mangaUrl}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
 
         // STATELESS: Create empty SManga with just URL!
         val sManga = SManga.create().apply {
@@ -510,10 +536,14 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
         // Fetch details from source
         val details = try {
             source.getMangaDetails(sManga)
+        } catch (e: HttpException) {
+            throw grpcHttpError(e.code, "Failed to fetch manga details from source")
         } catch (e: Exception) {
             logger.error(e) { "getMangaDetails failed for sourceId=${request.sourceId}, url=${request.mangaUrl}" }
-            throw io.grpc.StatusException(
-                io.grpc.Status.INTERNAL.withDescription("Failed to fetch manga details: ${e.message}")
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.FETCH_FAILED,
+                "Failed to fetch manga details: ${e.message}"
             )
         }
 
@@ -531,7 +561,7 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun searchManga(request: SearchMangaRequest): SearchMangaResponse {
         logger.debug { "searchManga: sourceId=${request.sourceId}, query=${request.query}, page=${request.page}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
 
         // Fetch search results — some sources throw 404 on no results
         val results = try {
@@ -547,13 +577,13 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
                     .setHasNextPage(false)
                     .build()
             }
-            throw io.grpc.StatusException(
-                io.grpc.Status.INTERNAL.withDescription("HTTP error ${e.code} during search")
-            )
+            throw grpcHttpError(e.code, "Search failed")
         } catch (e: Exception) {
             logger.error(e) { "searchManga failed for sourceId=${request.sourceId}" }
-            throw io.grpc.StatusException(
-                io.grpc.Status.INTERNAL.withDescription("Search failed: ${e.message}")
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.FETCH_FAILED,
+                "Search failed: ${e.message}"
             )
         }
 
@@ -574,9 +604,20 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun getPopularManga(request: GetPopularMangaRequest): GetPopularMangaResponse {
         logger.debug { "getPopularManga: sourceId=${request.sourceId}, page=${request.page}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
 
-        val results = source.getPopularManga(request.page)
+        val results = try {
+            source.getPopularManga(request.page)
+        } catch (e: HttpException) {
+            throw grpcHttpError(e.code, "Failed to fetch popular manga")
+        } catch (e: Exception) {
+            logger.error(e) { "getPopularManga failed for sourceId=${request.sourceId}" }
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.FETCH_FAILED,
+                "Failed to fetch popular manga: ${e.message}"
+            )
+        }
 
         // Convert all manga to protobuf
         val mangaList = results.mangas.map { sManga ->
@@ -595,15 +636,28 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun getLatestManga(request: GetLatestMangaRequest): GetLatestMangaResponse {
         logger.debug { "getLatestManga: sourceId=${request.sourceId}, page=${request.page}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
 
         if (!source.supportsLatest) {
-            throw io.grpc.StatusException(
-                io.grpc.Status.UNIMPLEMENTED.withDescription("Source does not support latest manga")
+            throw grpcError(
+                Status.UNIMPLEMENTED,
+                ErrorCode.SOURCE_LATEST_NOT_SUPPORTED,
+                "Source ${request.sourceId} does not support latest manga"
             )
         }
 
-        val results = source.getLatestUpdates(request.page)
+        val results = try {
+            source.getLatestUpdates(request.page)
+        } catch (e: HttpException) {
+            throw grpcHttpError(e.code, "Failed to fetch latest manga")
+        } catch (e: Exception) {
+            logger.error(e) { "getLatestManga failed for sourceId=${request.sourceId}" }
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.FETCH_FAILED,
+                "Failed to fetch latest manga: ${e.message}"
+            )
+        }
 
         // Convert all manga to protobuf
         val mangaList = results.mangas.map { sManga ->
@@ -624,14 +678,31 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun getChapterList(request: GetChapterListRequest): ChapterListResponse {
         logger.debug { "getChapterList: sourceId=${request.sourceId}, mangaUrl=${request.mangaUrl}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
 
         // STATELESS: Create empty SManga with just URL
         val sManga = SManga.create().apply {
             url = request.mangaUrl
         }
 
-        val chapters = source.getChapterList(sManga)
+        val chapters = try {
+            source.getChapterList(sManga)
+        } catch (e: LicensedMangaChaptersException) {
+            throw grpcError(
+                Status.FAILED_PRECONDITION,
+                ErrorCode.MANGA_LICENSED,
+                "Manga is licensed — no chapters available"
+            )
+        } catch (e: HttpException) {
+            throw grpcHttpError(e.code, "Failed to fetch chapter list")
+        } catch (e: Exception) {
+            logger.error(e) { "getChapterList failed for sourceId=${request.sourceId}, mangaUrl=${request.mangaUrl}" }
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.FETCH_FAILED,
+                "Failed to fetch chapter list: ${e.message}"
+            )
+        }
 
         // Parse chapter numbers from names (extensions typically leave chapter_number as -1)
         val mangaTitle = request.mangaTitle
@@ -656,14 +727,25 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
     override suspend fun getPageList(request: GetPageListRequest): PageListResponse {
         logger.debug { "getPageList: sourceId=${request.sourceId}, chapterUrl=${request.chapterUrl}" }
 
-        val source = SourceManager.getCatalogueSourceOrThrow(request.sourceId)
+        val source = getSourceOrThrow(request.sourceId)
 
         // STATELESS: Create empty SChapter with just URL
         val sChapter = SChapter.create().apply {
             url = request.chapterUrl
         }
 
-        val pages = source.getPageList(sChapter)
+        val pages = try {
+            source.getPageList(sChapter)
+        } catch (e: HttpException) {
+            throw grpcHttpError(e.code, "Failed to fetch page list")
+        } catch (e: Exception) {
+            logger.error(e) { "getPageList failed for sourceId=${request.sourceId}, chapterUrl=${request.chapterUrl}" }
+            throw grpcError(
+                Status.INTERNAL,
+                ErrorCode.FETCH_FAILED,
+                "Failed to fetch page list: ${e.message}"
+            )
+        }
 
         return PageListResponse.newBuilder()
             .addAllPages(pages.map { page ->
@@ -674,6 +756,19 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             })
             .build()
     }
+
+    // ==================== Helper Methods ====================
+
+    /**
+     * Get a catalogue source by ID or throw a proper gRPC NOT_FOUND error.
+     */
+    private fun getSourceOrThrow(sourceId: Long) =
+        SourceManager.getCatalogueSource(sourceId)
+            ?: throw grpcError(
+                Status.NOT_FOUND,
+                ErrorCode.SOURCE_NOT_FOUND,
+                "Source $sourceId not found. Is the extension installed?"
+            )
 
     // ==================== Helper Extensions ====================
 

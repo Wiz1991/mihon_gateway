@@ -11,6 +11,7 @@ import io.grpc.protobuf.services.ProtoReflectionService
 import kotlinx.coroutines.runBlocking
 import moe.radar.mihon_gateway.browser.PlaywrightManager
 import moe.radar.mihon_gateway.extension.ExtensionManager
+import moe.radar.mihon_gateway.service.GrpcExceptionInterceptor
 import moe.radar.mihon_gateway.service.ImageProxyService
 import moe.radar.mihon_gateway.service.MangaSourceServiceImpl
 import org.koin.core.context.startKoin
@@ -85,10 +86,11 @@ object Main {
             }
         }
 
-        // Build gRPC service with gRPC-Web support
+        // Build gRPC service with gRPC-Web support and error interceptor
         val grpcService = GrpcService.builder()
             .addService(MangaSourceServiceImpl())
             .addService(ProtoReflectionService.newInstance())
+            .intercept(GrpcExceptionInterceptor())
             .enableUnframedRequests(true)
             .build()
 
