@@ -19,10 +19,13 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.grpc.Status
+import io.opentelemetry.context.Context
 import moe.radar.mihon_gateway.extension.ExtensionManager
 import moe.radar.mihon_gateway.proto.*
 import moe.radar.mihon_gateway.source.SourceManager
 import moe.radar.mihon_gateway.state.StatelessState
+import moe.radar.mihon_gateway.telemetry.GrpcTracingInterceptor
+import moe.radar.mihon_gateway.telemetry.Telemetry
 import okhttp3.Cookie
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.koin.core.component.KoinComponent
@@ -524,117 +527,125 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
      * Creates an empty SManga instance with just the URL set.
      */
     override suspend fun getMangaDetails(request: GetMangaDetailsRequest): Manga {
-        logger.debug { "getMangaDetails: sourceId=${request.sourceId}, url=${request.mangaUrl}" }
+        logger.info { "getMangaDetails sourceId=${request.sourceId} url=${request.mangaUrl}" }
 
         val source = getSourceOrThrow(request.sourceId)
 
-        // STATELESS: Create empty SManga with just URL!
-        val sManga = SManga.create().apply {
-            url = request.mangaUrl
+        return withSourceSpan("getMangaDetails", request.sourceId, source.name, requestUrl = request.mangaUrl) { span ->
+            span.setAttribute("request.manga_url", request.mangaUrl)
+
+            val sManga = SManga.create().apply {
+                url = request.mangaUrl
+            }
+
+            val details = try {
+                source.getMangaDetails(sManga)
+            } catch (e: HttpException) {
+                throw grpcHttpError(e.code, "Failed to fetch manga details from source")
+            } catch (e: Exception) {
+                logger.error(e) { "getMangaDetails failed sourceId=${request.sourceId} url=${request.mangaUrl}" }
+                throw grpcError(
+                    Status.INTERNAL,
+                    ErrorCode.FETCH_FAILED,
+                    "Failed to fetch manga details: ${e.message}"
+                )
+            }
+
+            details.url = request.mangaUrl
+            details.toProto(request.sourceId)
         }
-
-        // Fetch details from source
-        val details = try {
-            source.getMangaDetails(sManga)
-        } catch (e: HttpException) {
-            throw grpcHttpError(e.code, "Failed to fetch manga details from source")
-        } catch (e: Exception) {
-            logger.error(e) { "getMangaDetails failed for sourceId=${request.sourceId}, url=${request.mangaUrl}" }
-            throw grpcError(
-                Status.INTERNAL,
-                ErrorCode.FETCH_FAILED,
-                "Failed to fetch manga details: ${e.message}"
-            )
-        }
-
-        // Source returns a new SManga with metadata only — URL is never set on the result.
-        // Preserve the original URL from the request (same as Suwayomi keeping it from DB).
-        details.url = request.mangaUrl
-
-        // Convert to protobuf (no DB storage!)
-        return details.toProto(request.sourceId)
     }
 
     /**
      * Search manga - returns all results at once.
      */
     override suspend fun searchManga(request: SearchMangaRequest): SearchMangaResponse {
-        logger.debug { "searchManga: sourceId=${request.sourceId}, query=${request.query}, page=${request.page}" }
+        logger.info { "searchManga sourceId=${request.sourceId} query=${request.query} page=${request.page}" }
 
         val source = getSourceOrThrow(request.sourceId)
 
-        // Fetch search results — some sources throw 404 on no results
-        val results = try {
-            source.getSearchManga(
-                page = request.page,
-                query = request.query,
-                filters = FilterList()
-            )
-        } catch (e: HttpException) {
-            if (e.code == 404) {
-                logger.debug { "searchManga returned 404, treating as empty results" }
-                return SearchMangaResponse.newBuilder()
-                    .setHasNextPage(false)
-                    .build()
+        return withSourceSpan("searchManga", request.sourceId, source.name) { span ->
+            span.setAttribute("request.query", request.query)
+            span.setAttribute("request.page", request.page.toLong())
+
+            val results = try {
+                source.getSearchManga(
+                    page = request.page,
+                    query = request.query,
+                    filters = FilterList()
+                )
+            } catch (e: HttpException) {
+                if (e.code == 404) {
+                    logger.info { "searchManga returned 404, treating as empty results" }
+                    return@withSourceSpan SearchMangaResponse.newBuilder()
+                        .setHasNextPage(false)
+                        .build()
+                }
+                throw grpcHttpError(e.code, "Search failed")
+            } catch (e: Exception) {
+                logger.error(e) { "searchManga failed sourceId=${request.sourceId}" }
+                throw grpcError(
+                    Status.INTERNAL,
+                    ErrorCode.FETCH_FAILED,
+                    "Search failed: ${e.message}"
+                )
             }
-            throw grpcHttpError(e.code, "Search failed")
-        } catch (e: Exception) {
-            logger.error(e) { "searchManga failed for sourceId=${request.sourceId}" }
-            throw grpcError(
-                Status.INTERNAL,
-                ErrorCode.FETCH_FAILED,
-                "Search failed: ${e.message}"
-            )
-        }
 
-        // Convert all manga to protobuf
-        val mangaList = results.mangas.map { sManga ->
-            sManga.toProto(request.sourceId)
-        }
+            span.setAttribute("results.count", results.mangas.size.toLong())
 
-        return SearchMangaResponse.newBuilder()
-            .addAllManga(mangaList)
-            .setHasNextPage(results.hasNextPage)
-            .build()
+            val mangaList = results.mangas.map { sManga ->
+                sManga.toProto(request.sourceId)
+            }
+
+            SearchMangaResponse.newBuilder()
+                .addAllManga(mangaList)
+                .setHasNextPage(results.hasNextPage)
+                .build()
+        }
     }
 
     /**
      * Get popular manga - returns all results at once.
      */
     override suspend fun getPopularManga(request: GetPopularMangaRequest): GetPopularMangaResponse {
-        logger.debug { "getPopularManga: sourceId=${request.sourceId}, page=${request.page}" }
+        logger.info { "getPopularManga sourceId=${request.sourceId} page=${request.page}" }
 
         val source = getSourceOrThrow(request.sourceId)
 
-        val results = try {
-            source.getPopularManga(request.page)
-        } catch (e: HttpException) {
-            throw grpcHttpError(e.code, "Failed to fetch popular manga")
-        } catch (e: Exception) {
-            logger.error(e) { "getPopularManga failed for sourceId=${request.sourceId}" }
-            throw grpcError(
-                Status.INTERNAL,
-                ErrorCode.FETCH_FAILED,
-                "Failed to fetch popular manga: ${e.message}"
-            )
-        }
+        return withSourceSpan("getPopularManga", request.sourceId, source.name) { span ->
+            span.setAttribute("request.page", request.page.toLong())
 
-        // Convert all manga to protobuf
-        val mangaList = results.mangas.map { sManga ->
-            sManga.toProto(request.sourceId)
-        }
+            val results = try {
+                source.getPopularManga(request.page)
+            } catch (e: HttpException) {
+                throw grpcHttpError(e.code, "Failed to fetch popular manga")
+            } catch (e: Exception) {
+                logger.error(e) { "getPopularManga failed sourceId=${request.sourceId}" }
+                throw grpcError(
+                    Status.INTERNAL,
+                    ErrorCode.FETCH_FAILED,
+                    "Failed to fetch popular manga: ${e.message}"
+                )
+            }
 
-        return GetPopularMangaResponse.newBuilder()
-            .addAllManga(mangaList)
-            .setHasNextPage(results.hasNextPage)
-            .build()
+            span.setAttribute("results.count", results.mangas.size.toLong())
+
+            val mangaList = results.mangas.map { sManga ->
+                sManga.toProto(request.sourceId)
+            }
+
+            GetPopularMangaResponse.newBuilder()
+                .addAllManga(mangaList)
+                .setHasNextPage(results.hasNextPage)
+                .build()
+        }
     }
 
     /**
      * Get latest manga - returns all results at once.
      */
     override suspend fun getLatestManga(request: GetLatestMangaRequest): GetLatestMangaResponse {
-        logger.debug { "getLatestManga: sourceId=${request.sourceId}, page=${request.page}" }
+        logger.info { "getLatestManga sourceId=${request.sourceId} page=${request.page}" }
 
         val source = getSourceOrThrow(request.sourceId)
 
@@ -646,28 +657,33 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             )
         }
 
-        val results = try {
-            source.getLatestUpdates(request.page)
-        } catch (e: HttpException) {
-            throw grpcHttpError(e.code, "Failed to fetch latest manga")
-        } catch (e: Exception) {
-            logger.error(e) { "getLatestManga failed for sourceId=${request.sourceId}" }
-            throw grpcError(
-                Status.INTERNAL,
-                ErrorCode.FETCH_FAILED,
-                "Failed to fetch latest manga: ${e.message}"
-            )
-        }
+        return withSourceSpan("getLatestManga", request.sourceId, source.name) { span ->
+            span.setAttribute("request.page", request.page.toLong())
 
-        // Convert all manga to protobuf
-        val mangaList = results.mangas.map { sManga ->
-            sManga.toProto(request.sourceId)
-        }
+            val results = try {
+                source.getLatestUpdates(request.page)
+            } catch (e: HttpException) {
+                throw grpcHttpError(e.code, "Failed to fetch latest manga")
+            } catch (e: Exception) {
+                logger.error(e) { "getLatestManga failed sourceId=${request.sourceId}" }
+                throw grpcError(
+                    Status.INTERNAL,
+                    ErrorCode.FETCH_FAILED,
+                    "Failed to fetch latest manga: ${e.message}"
+                )
+            }
 
-        return GetLatestMangaResponse.newBuilder()
-            .addAllManga(mangaList)
-            .setHasNextPage(results.hasNextPage)
-            .build()
+            span.setAttribute("results.count", results.mangas.size.toLong())
+
+            val mangaList = results.mangas.map { sManga ->
+                sManga.toProto(request.sourceId)
+            }
+
+            GetLatestMangaResponse.newBuilder()
+                .addAllManga(mangaList)
+                .setHasNextPage(results.hasNextPage)
+                .build()
+        }
     }
 
     // ==================== Chapter Operations ====================
@@ -676,85 +692,94 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
      * Get chapter list for a manga (using URL).
      */
     override suspend fun getChapterList(request: GetChapterListRequest): ChapterListResponse {
-        logger.debug { "getChapterList: sourceId=${request.sourceId}, mangaUrl=${request.mangaUrl}" }
+        logger.info { "getChapterList sourceId=${request.sourceId} mangaUrl=${request.mangaUrl}" }
 
         val source = getSourceOrThrow(request.sourceId)
 
-        // STATELESS: Create empty SManga with just URL
-        val sManga = SManga.create().apply {
-            url = request.mangaUrl
-        }
+        return withSourceSpan("getChapterList", request.sourceId, source.name, requestUrl = request.mangaUrl) { span ->
+            span.setAttribute("request.manga_url", request.mangaUrl)
 
-        val chapters = try {
-            source.getChapterList(sManga)
-        } catch (e: LicensedMangaChaptersException) {
-            throw grpcError(
-                Status.FAILED_PRECONDITION,
-                ErrorCode.MANGA_LICENSED,
-                "Manga is licensed — no chapters available"
-            )
-        } catch (e: HttpException) {
-            throw grpcHttpError(e.code, "Failed to fetch chapter list")
-        } catch (e: Exception) {
-            logger.error(e) { "getChapterList failed for sourceId=${request.sourceId}, mangaUrl=${request.mangaUrl}" }
-            throw grpcError(
-                Status.INTERNAL,
-                ErrorCode.FETCH_FAILED,
-                "Failed to fetch chapter list: ${e.message}"
-            )
-        }
-
-        // Parse chapter numbers from names (extensions typically leave chapter_number as -1)
-        val mangaTitle = request.mangaTitle
-        if (mangaTitle.isNotEmpty()) {
-            chapters.forEach { chapter ->
-                chapter.chapter_number = ChapterRecognition.parseChapterNumber(
-                    mangaTitle,
-                    chapter.name,
-                    chapter.chapter_number.toDouble(),
-                ).toFloat()
+            val sManga = SManga.create().apply {
+                url = request.mangaUrl
             }
-        }
 
-        return ChapterListResponse.newBuilder()
-            .addAllChapters(chapters.map { it.toProto() })
-            .build()
+            val chapters = try {
+                source.getChapterList(sManga)
+            } catch (e: LicensedMangaChaptersException) {
+                throw grpcError(
+                    Status.FAILED_PRECONDITION,
+                    ErrorCode.MANGA_LICENSED,
+                    "Manga is licensed — no chapters available"
+                )
+            } catch (e: HttpException) {
+                throw grpcHttpError(e.code, "Failed to fetch chapter list")
+            } catch (e: Exception) {
+                logger.error(e) { "getChapterList failed sourceId=${request.sourceId} mangaUrl=${request.mangaUrl}" }
+                throw grpcError(
+                    Status.INTERNAL,
+                    ErrorCode.FETCH_FAILED,
+                    "Failed to fetch chapter list: ${e.message}"
+                )
+            }
+
+            val mangaTitle = request.mangaTitle
+            if (mangaTitle.isNotEmpty()) {
+                chapters.forEach { chapter ->
+                    chapter.chapter_number = ChapterRecognition.parseChapterNumber(
+                        mangaTitle,
+                        chapter.name,
+                        chapter.chapter_number.toDouble(),
+                    ).toFloat()
+                }
+            }
+
+            span.setAttribute("results.count", chapters.size.toLong())
+
+            ChapterListResponse.newBuilder()
+                .addAllChapters(chapters.map { it.toProto() })
+                .build()
+        }
     }
 
     /**
      * Get page list for a chapter (using URL).
      */
     override suspend fun getPageList(request: GetPageListRequest): PageListResponse {
-        logger.debug { "getPageList: sourceId=${request.sourceId}, chapterUrl=${request.chapterUrl}" }
+        logger.info { "getPageList sourceId=${request.sourceId} chapterUrl=${request.chapterUrl}" }
 
         val source = getSourceOrThrow(request.sourceId)
 
-        // STATELESS: Create empty SChapter with just URL
-        val sChapter = SChapter.create().apply {
-            url = request.chapterUrl
-        }
+        return withSourceSpan("getPageList", request.sourceId, source.name, requestUrl = request.chapterUrl) { span ->
+            span.setAttribute("request.chapter_url", request.chapterUrl)
 
-        val pages = try {
-            source.getPageList(sChapter)
-        } catch (e: HttpException) {
-            throw grpcHttpError(e.code, "Failed to fetch page list")
-        } catch (e: Exception) {
-            logger.error(e) { "getPageList failed for sourceId=${request.sourceId}, chapterUrl=${request.chapterUrl}" }
-            throw grpcError(
-                Status.INTERNAL,
-                ErrorCode.FETCH_FAILED,
-                "Failed to fetch page list: ${e.message}"
-            )
-        }
+            val sChapter = SChapter.create().apply {
+                url = request.chapterUrl
+            }
 
-        return PageListResponse.newBuilder()
-            .addAllPages(pages.map { page ->
-                moe.radar.mihon_gateway.proto.Page.newBuilder()
-                    .setIndex(page.index)
-                    .setImageUrl(page.imageUrl ?: page.url)
-                    .build()
-            })
-            .build()
+            val pages = try {
+                source.getPageList(sChapter)
+            } catch (e: HttpException) {
+                throw grpcHttpError(e.code, "Failed to fetch page list")
+            } catch (e: Exception) {
+                logger.error(e) { "getPageList failed sourceId=${request.sourceId} chapterUrl=${request.chapterUrl}" }
+                throw grpcError(
+                    Status.INTERNAL,
+                    ErrorCode.FETCH_FAILED,
+                    "Failed to fetch page list: ${e.message}"
+                )
+            }
+
+            span.setAttribute("results.count", pages.size.toLong())
+
+            PageListResponse.newBuilder()
+                .addAllPages(pages.map { page ->
+                    moe.radar.mihon_gateway.proto.Page.newBuilder()
+                        .setIndex(page.index)
+                        .setImageUrl(page.imageUrl ?: page.url)
+                        .build()
+                })
+                .build()
+        }
     }
 
     // ==================== Helper Methods ====================
@@ -848,6 +873,55 @@ class MangaSourceServiceImpl : MangaSourceServiceGrpcKt.MangaSourceServiceCorout
             .setChapterNumber(this.chapter_number)
             .apply { this@toProto.scanlator?.let { setScanlator(it) } }
             .build()
+    }
+
+    /**
+     * Run [block] inside an OTLP span scoped to a source operation.
+     * Picks up the parent context from the gRPC server span (set by GrpcTracingInterceptor).
+     */
+    private inline fun <T> withSourceSpan(
+        operation: String,
+        sourceId: Long,
+        sourceName: String,
+        requestUrl: String = "",
+        block: (io.opentelemetry.api.trace.Span) -> T,
+    ): T {
+        val parentCtx = GrpcTracingInterceptor.OTEL_CONTEXT_KEY.get()
+            ?: Context.current()
+
+        // Resolve the source's base URL for the span
+        val sourceBaseUrl = try {
+            (SourceManager.getCatalogueSource(sourceId) as? HttpSource)?.baseUrl ?: ""
+        } catch (_: Exception) { "" }
+
+        // Build full target URL from base + request path
+        val targetUrl = if (requestUrl.isNotEmpty() && sourceBaseUrl.isNotEmpty()) {
+            if (requestUrl.startsWith("http")) requestUrl else "$sourceBaseUrl$requestUrl"
+        } else ""
+
+        val span = Telemetry.tracer.spanBuilder("source.$operation")
+            .setParent(parentCtx)
+            .setAttribute("source.id", sourceId)
+            .setAttribute("source.name", sourceName)
+            .setAttribute("source.base_url", sourceBaseUrl)
+            .apply { if (targetUrl.isNotEmpty()) setAttribute("source.target_url", targetUrl) }
+            .startSpan()
+
+        return span.makeCurrent().use { _ ->
+            org.slf4j.MDC.put("sourceId", sourceId.toString())
+            org.slf4j.MDC.put("sourceName", sourceName)
+            Telemetry.setMdcFromCurrentSpan()
+            try {
+                block(span)
+            } catch (e: Throwable) {
+                span.setStatus(io.opentelemetry.api.trace.StatusCode.ERROR, e.message ?: "error")
+                span.recordException(e)
+                throw e
+            } finally {
+                span.end()
+                Telemetry.clearMdc()
+            }
+        }
     }
 
     /**

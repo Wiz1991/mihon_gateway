@@ -82,6 +82,14 @@ dependencies {
     // Logging
     implementation("io.github.oshai:kotlin-logging-jvm:6.0.1")
     implementation("ch.qos.logback:logback-classic:1.5.13")
+    implementation("net.logstash.logback:logstash-logback-encoder:8.0")
+
+    // OpenTelemetry
+    implementation(platform("io.opentelemetry:opentelemetry-bom:1.45.0"))
+    implementation("io.opentelemetry:opentelemetry-api")
+    implementation("io.opentelemetry:opentelemetry-sdk")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+    implementation("io.opentelemetry:opentelemetry-sdk-extension-autoconfigure")
 
     // AndroidCompat (as module, like Suwayomi)
     implementation(project(":AndroidCompat"))

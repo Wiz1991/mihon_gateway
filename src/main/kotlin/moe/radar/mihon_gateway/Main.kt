@@ -14,6 +14,8 @@ import moe.radar.mihon_gateway.extension.ExtensionManager
 import moe.radar.mihon_gateway.service.GrpcExceptionInterceptor
 import moe.radar.mihon_gateway.service.ImageProxyService
 import moe.radar.mihon_gateway.service.MangaSourceServiceImpl
+import moe.radar.mihon_gateway.telemetry.GrpcTracingInterceptor
+import moe.radar.mihon_gateway.telemetry.Telemetry
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 import moe.radar.mihon_gateway.config.NetworkConfigModule
@@ -42,6 +44,9 @@ object Main {
         val port = parsePort(args)
 
         logger.info { "Starting Mihon gRPC Service on port $port..." }
+
+        // Initialize OpenTelemetry (reads config from OTEL_* env vars)
+        Telemetry.init()
 
         // Initialize Koin dependency injection (exactly like Suwayomi)
         val app = App()
@@ -91,6 +96,7 @@ object Main {
             .addService(MangaSourceServiceImpl())
             .addService(ProtoReflectionService.newInstance())
             .intercept(GrpcExceptionInterceptor())
+            .intercept(GrpcTracingInterceptor())
             .enableUnframedRequests(true)
             .build()
 
