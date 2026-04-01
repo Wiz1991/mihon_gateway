@@ -12,6 +12,7 @@ import moe.radar.mihon_gateway.test.BaseTest
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -25,6 +26,7 @@ import kotlin.test.assertTrue
  * existing integration test pattern.
  */
 @DisplayName("Source Preferences Tests")
+@Tag("integration")
 class SourcePreferencesTest : BaseTest() {
 
     companion object {

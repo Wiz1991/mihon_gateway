@@ -3,6 +3,7 @@ package moe.radar.mihon_gateway.extension
 import kotlinx.coroutines.runBlocking
 import moe.radar.mihon_gateway.state.StatelessState
 import moe.radar.mihon_gateway.test.BaseTest
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
@@ -18,6 +19,7 @@ import kotlin.test.assertEquals
  * Tests extension fetching, installation, and source loading.
  */
 @DisplayName("ExtensionManager Tests")
+@Tag("integration")
 class ExtensionManagerTest : BaseTest() {
 
     @BeforeEach

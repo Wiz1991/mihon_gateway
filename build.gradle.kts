@@ -103,8 +103,8 @@ dependencies {
 
     // Testing
     testImplementation(kotlin("test"))
-    testImplementation("io.grpc:grpc-testing:1.60.1")
-    testImplementation("io.grpc:grpc-netty-shaded:1.60.1")
+    testImplementation("io.grpc:grpc-testing:1.76.0")
+    testImplementation("io.grpc:grpc-netty-shaded:1.76.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.insert-koin:koin-test:4.1.1")
     testImplementation("io.insert-koin:koin-test-junit5:4.1.1")
@@ -118,7 +118,7 @@ protobuf {
     }
     plugins {
         id("grpc") {
-            artifact = "io.grpc:protoc-gen-grpc-java:1.60.1"
+            artifact = "io.grpc:protoc-gen-grpc-java:1.76.0"
         }
         id("grpckt") {
             artifact = "io.grpc:protoc-gen-grpc-kotlin:1.4.1:jdk8@jar"
@@ -145,7 +145,17 @@ application {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+}
+
+tasks.register<Test>("integrationTest") {
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+    description = "Run integration tests that require network access"
+    group = "verification"
 }
 
 kotlin {
