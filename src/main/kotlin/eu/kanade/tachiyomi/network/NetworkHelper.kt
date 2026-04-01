@@ -20,19 +20,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import moe.radar.mihon_gateway.config.NetworkConfigModule
 import okhttp3.Cache
+import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.brotli.BrotliInterceptor
 import okhttp3.logging.HttpLoggingInterceptor
+import xyz.nulldev.ts.config.GlobalConfigManager
 import java.net.CookieHandler
 import java.net.CookieManager
 import java.net.CookiePolicy
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 
 class NetworkHelper(
     context: Context,
 ) {
+    private val logger = KotlinLogging.logger {}
     //    private val preferences: PreferencesHelper by injectLazy()
 
 //    private val cacheDir = File(context.cacheDir, "network_cache")
@@ -106,6 +112,30 @@ class NetworkHelper(
             builder.addInterceptor(
                 CloudflareInterceptor(setUserAgent = { userAgent.value = it }),
             )
+
+            // Apply proxy configuration if enabled
+            try {
+                val networkConfig = GlobalConfigManager.module<NetworkConfigModule>()
+                if (networkConfig.proxyEnabled && networkConfig.proxyHost.isNotBlank()) {
+                    val proxyType = when (networkConfig.proxyType.uppercase()) {
+                        "SOCKS" -> Proxy.Type.SOCKS
+                        else -> Proxy.Type.HTTP
+                    }
+                    builder.proxy(Proxy(proxyType, InetSocketAddress(networkConfig.proxyHost, networkConfig.proxyPort)))
+
+                    if (networkConfig.proxyUsername.isNotBlank()) {
+                        builder.proxyAuthenticator { _, response ->
+                            response.request.newBuilder()
+                                .header("Proxy-Authorization", Credentials.basic(networkConfig.proxyUsername, networkConfig.proxyPassword))
+                                .build()
+                        }
+                    }
+
+                    logger.info { "Proxy configured: ${networkConfig.proxyType}://${networkConfig.proxyHost}:${networkConfig.proxyPort}" }
+                }
+            } catch (e: Exception) {
+                logger.warn(e) { "Failed to apply proxy configuration" }
+            }
 
             // when (preferences.dohProvider().get()) {
             //     PREF_DOH_CLOUDFLARE -> builder.dohCloudflare()

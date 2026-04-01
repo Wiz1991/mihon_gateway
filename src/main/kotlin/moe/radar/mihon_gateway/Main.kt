@@ -15,9 +15,11 @@ import moe.radar.mihon_gateway.service.ImageProxyService
 import moe.radar.mihon_gateway.service.MangaSourceServiceImpl
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
+import moe.radar.mihon_gateway.config.NetworkConfigModule
 import xyz.nulldev.androidcompat.AndroidCompat
 import xyz.nulldev.androidcompat.AndroidCompatInitializer
 import xyz.nulldev.androidcompat.androidCompatModule
+import xyz.nulldev.ts.config.GlobalConfigManager
 import xyz.nulldev.ts.config.configManagerModule
 import java.io.File
 import kotlin.system.exitProcess
@@ -55,6 +57,12 @@ object Main {
 
         // Initialize AndroidCompat (exactly like Suwayomi)
         AndroidCompatInitializer().init()
+
+        // Register network config module (proxy + rate limit multiplier)
+        GlobalConfigManager.registerModules(
+            NetworkConfigModule.register(GlobalConfigManager.config),
+        )
+
         val androidCompat = AndroidCompat()
         androidCompat.startApp(app)
 

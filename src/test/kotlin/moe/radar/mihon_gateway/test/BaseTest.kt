@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.createAppModule
 import io.github.oshai.kotlinlogging.KotlinLogging
 import moe.radar.mihon_gateway.ApplicationDirs
+import moe.radar.mihon_gateway.config.NetworkConfigModule
 import org.junit.jupiter.api.BeforeAll
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -12,6 +13,7 @@ import org.koin.test.KoinTest
 import xyz.nulldev.androidcompat.AndroidCompat
 import xyz.nulldev.androidcompat.AndroidCompatInitializer
 import xyz.nulldev.androidcompat.androidCompatModule
+import xyz.nulldev.ts.config.GlobalConfigManager
 import xyz.nulldev.ts.config.configManagerModule
 import java.io.File
 
@@ -75,6 +77,12 @@ abstract class BaseTest : KoinTest {
 
             // Initialize AndroidCompat (exactly like Suwayomi)
             AndroidCompatInitializer().init()
+
+            // Register network config module (proxy + rate limit multiplier)
+            GlobalConfigManager.registerModules(
+                NetworkConfigModule.register(GlobalConfigManager.config),
+            )
+
             val androidCompat = AndroidCompat()
             androidCompat.startApp(app)
 
