@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.util.lang
 
-import net.greypanther.natsort.CaseInsensitiveSimpleNaturalComparator
 import kotlin.math.floor
 
 /**
@@ -36,10 +35,43 @@ fun String.truncateCenter(
 
 /**
  * Case-insensitive natural comparator for strings.
+ *
+ * Compares strings naturally so that e.g. "Chapter 2" < "Chapter 10".
  */
 fun String.compareToCaseInsensitiveNaturalOrder(other: String): Int {
-    val comparator = CaseInsensitiveSimpleNaturalComparator.getInstance<String>()
-    return comparator.compare(this, other)
+    val a = this.lowercase()
+    val b = other.lowercase()
+    var i = 0
+    var j = 0
+    while (i < a.length && j < b.length) {
+        val ca = a[i]
+        val cb = b[j]
+        if (ca.isDigit() && cb.isDigit()) {
+            // Skip leading zeros and compare numeric segments by value
+            var ai = i
+            var bj = j
+            while (ai < a.length && a[ai] == '0') ai++
+            while (bj < b.length && b[bj] == '0') bj++
+            var ae = ai
+            var be = bj
+            while (ae < a.length && a[ae].isDigit()) ae++
+            while (be < b.length && b[be].isDigit()) be++
+            val lenA = ae - ai
+            val lenB = be - bj
+            if (lenA != lenB) return lenA - lenB
+            for (k in 0 until lenA) {
+                val diff = a[ai + k] - b[bj + k]
+                if (diff != 0) return diff
+            }
+            i = ae
+            j = be
+        } else {
+            if (ca != cb) return ca - cb
+            i++
+            j++
+        }
+    }
+    return a.length - b.length
 }
 
 /**

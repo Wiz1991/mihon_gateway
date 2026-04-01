@@ -76,9 +76,6 @@ dependencies {
     // ICU4J for text normalization
     implementation("com.ibm.icu:icu4j:77.1")
 
-    // Natural sort comparator
-    implementation("com.github.gpanther:java-nat-sort:natural-comparator-1.1")
-
     // Logging
     implementation("io.github.oshai:kotlin-logging-jvm:6.0.1")
     implementation("ch.qos.logback:logback-classic:1.5.13")
