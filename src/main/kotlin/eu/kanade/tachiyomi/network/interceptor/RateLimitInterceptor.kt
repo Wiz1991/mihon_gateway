@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.network.interceptor
 
 import android.os.SystemClock
+import io.opentelemetry.api.common.AttributeKey
+import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.api.trace.Span
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -76,6 +79,9 @@ internal class RateLimitInterceptor(
             else -> return chain.proceed(request)
         }
 
+        val span = Span.current()
+        val waitStartMs = SystemClock.elapsedRealtime()
+
         try {
             fairLock.acquire()
         } catch (e: InterruptedException) {
@@ -114,6 +120,19 @@ internal class RateLimitInterceptor(
             }
         } finally {
             fairLock.release()
+        }
+
+        val waitMs = SystemClock.elapsedRealtime() - waitStartMs
+        if (waitMs > 0) {
+            span.addEvent(
+                "rate_limit.wait",
+                Attributes.of(
+                    AttributeKey.longKey("rate_limit.wait_ms"), waitMs,
+                    AttributeKey.longKey("rate_limit.permits"), permits.toLong(),
+                    AttributeKey.longKey("rate_limit.period_ms"), rateLimitMillis,
+                    AttributeKey.stringKey("rate_limit.host"), host ?: request.url.host,
+                ),
+            )
         }
 
         val response = chain.proceed(request)

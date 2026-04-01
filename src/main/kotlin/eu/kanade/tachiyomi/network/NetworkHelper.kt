@@ -21,11 +21,11 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import moe.radar.mihon_gateway.config.NetworkConfigModule
+import moe.radar.mihon_gateway.telemetry.TracingInterceptor
 import okhttp3.Cache
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.brotli.BrotliInterceptor
-import okhttp3.logging.HttpLoggingInterceptor
 import xyz.nulldev.ts.config.GlobalConfigManager
 import java.net.CookieHandler
 import java.net.CookieManager
@@ -93,21 +93,8 @@ class NetworkHelper(
                     .addNetworkInterceptor(IgnoreGzipInterceptor())
                     .addNetworkInterceptor(BrotliInterceptor)
 
-            // if (preferences.verboseLogging().get()) {
-            val httpLoggingInterceptor =
-                HttpLoggingInterceptor(
-                    object : HttpLoggingInterceptor.Logger {
-                        val logger = KotlinLogging.logger { }
-
-                        override fun log(message: String) {
-                            logger.debug { message }
-                        }
-                    },
-                ).apply {
-                    level = HttpLoggingInterceptor.Level.BASIC
-                }
-            builder.addNetworkInterceptor(httpLoggingInterceptor)
-            // }
+            // Single-line HTTP logging + OTLP spans (replaces multi-line HttpLoggingInterceptor)
+            builder.addInterceptor(TracingInterceptor())
 
             builder.addInterceptor(
                 CloudflareInterceptor(setUserAgent = { userAgent.value = it }),

@@ -1,0 +1,38 @@
+<configuration>
+    <!-- JSON structured logging - one line per log entry for Grafana Loki -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <!-- Include trace context from MDC -->
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>traceFlags</includeMdcKeyName>
+            <includeMdcKeyName>sourceId</includeMdcKeyName>
+            <includeMdcKeyName>sourceName</includeMdcKeyName>
+
+            <!-- Shorten field names for Loki efficiency -->
+            <fieldNames>
+                <timestamp>ts</timestamp>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+            </fieldNames>
+
+            <!-- Stack traces on a single line -->
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>20</maxDepthPerThrowable>
+                <shortenedClassNameLength>30</shortenedClassNameLength>
+                <rootCauseFirst>true</rootCauseFirst>
+                <inlineHash>true</inlineHash>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <!-- Suppress noisy loggers -->
+    <logger name="io.grpc.netty" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="com.linecorp.armeria" level="INFO"/>
+    <logger name="org.eclipse.jetty" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>
